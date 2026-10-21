@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "passgate"
+version = "0.1.0"
+description = "Statistical pass^N gate: require an eval candidate to clear a Wilson-bound bar on every round, not just on average"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "calasdan-sketch" }]
+keywords = ["evals", "llm", "reliability", "wilson", "statistics", "gate", "regression"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+[project.scripts]
+passgate = "passgate.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
