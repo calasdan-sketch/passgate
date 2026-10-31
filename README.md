@@ -10,6 +10,8 @@ Eval flakiness is the quiet killer: a prompt scores 91% once, ships, and regress
 pip install passgate
 ```
 
+Also runnable as `python -m passgate ...`. Python 3.9+, no dependencies.
+
 ## The gate
 
 ```bash
@@ -74,7 +76,12 @@ print(cmp.verdict)  # candidate-better | baseline-better | inconclusive
 - Wilson interval (not Wald): behaves correctly near 0% and 100%, where the naive interval explodes.
 - `gate` fails when rounds < `--min-rounds`, so "we only ran it once" cannot pass a 3-round gate.
 - Pure stdlib — no scipy, no pandas.
+- Exit codes: `0` pass, `1` gate failed / improvement not significant, `2` bad input (missing file, bad JSON/CSV, invalid number). Keeps CI from treating a typo as a model regression.
+- Input files may be UTF-8 with or without a BOM, LF or CRLF.
+- The Wilson interval is two-sided, so a 95% interval gives a one-sided 97.5% lower bound per round. Requiring every round to clear the bar is conservative, but passgate does not apply a formal multiple-testing correction.
+- Rounds are treated as independent samples of one pass rate. If rounds reuse the same test items, the real uncertainty is larger than the bound shows.
+- `compare` pools all rounds; it does not model round-to-round variance.
 
 ## License
 
-MIT-style: use it, ship it, no warranty.
+MIT. See `LICENSE`.

@@ -1,10 +1,11 @@
 """The pass^N gate and the candidate-vs-baseline comparison."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
-from .stats import fisher_exact_2x2, two_proportion_z, wilson_lower
+from .stats import fisher_exact_2x2, two_proportion_z, wilson_lower, z_for_confidence
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ def evaluate_rounds(
     """
     if not 0.0 < threshold < 1.0:
         raise ValueError("threshold must be between 0 and 1")
+    z_for_confidence(confidence)  # validates 0.5 < confidence < 1
     if min_rounds < 1:
         raise ValueError("min_rounds must be >= 1")
     result = GateResult(threshold=threshold, confidence=confidence, min_rounds=min_rounds)
@@ -131,7 +133,7 @@ class Comparison:
         return {
             "candidate_rate": round(self.candidate_rate, 6),
             "baseline_rate": round(self.baseline_rate, 6),
-            "z": round(self.z, 6),
+            "z": round(self.z, 6) if math.isfinite(self.z) else None,
             "p_one_sided": round(self.p_one_sided, 6),
             "fisher_p": round(self.fisher_p, 6),
             "alpha": self.alpha,
@@ -140,7 +142,7 @@ class Comparison:
 
     def __str__(self) -> str:
         return (
-            f"candidate {self.candidate_rate:.3f} vs baseline {self.baseline_rate:.3f} — "
+            f"candidate {self.candidate_rate:.3f} vs baseline {self.baseline_rate:.3f} - "
             f"z={self.z:.3f}, one-sided p={self.p_one_sided:.4g}, "
             f"fisher p={self.fisher_p:.4g}, verdict: {self.verdict}"
         )
@@ -152,6 +154,10 @@ def compare(
     alpha: float = 0.05,
 ) -> Comparison:
     """Compare candidate vs baseline on pooled totals, with Fisher as a check."""
+    if not candidate or not baseline:
+        raise ValueError("compare needs at least one candidate round and one baseline round")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be between 0 and 1")
     c1 = sum(r.passes for r in candidate)
     n1 = sum(r.trials for r in candidate)
     c2 = sum(r.passes for r in baseline)

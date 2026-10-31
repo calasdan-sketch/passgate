@@ -1,9 +1,9 @@
-"""passgate — statistical pass^N reliability gate for evals."""
+"""passgate - statistical pass^N reliability gate for evals."""
 
-from .gate import Round, GateResult, evaluate_rounds, compare
-from .stats import wilson_lower, wilson_interval, two_proportion_z, fisher_exact_2x2
+from .gate import GateResult, Round, compare, evaluate_rounds
+from .stats import fisher_exact_2x2, two_proportion_z, wilson_interval, wilson_lower
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "Round",
     "GateResult",

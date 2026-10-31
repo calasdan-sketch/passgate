@@ -53,7 +53,7 @@ def two_proportion_z(c1: int, n1: int, c2: int, n2: int) -> Tuple[float, float]:
     if se == 0.0:
         return (0.0, 1.0) if p1 == p2 else (math.inf if p1 > p2 else -math.inf, 0.0)
     z = (p1 - p2) / se
-    return z, 1.0 - _NORMAL.cdf(z)
+    return z, _NORMAL.cdf(-z)
 
 
 def fisher_exact_2x2(a: int, b: int, c: int, d: int) -> float:
@@ -66,6 +66,8 @@ def fisher_exact_2x2(a: int, b: int, c: int, d: int) -> float:
         if v < 0:
             raise ValueError("counts must be non-negative")
     n = a + b + c + d
+    if n == 0:
+        raise ValueError("table is empty")
     row1, col1 = a + b, a + c
 
     def prob(x: int) -> float:
