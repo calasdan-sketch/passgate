@@ -1,4 +1,4 @@
-﻿"""Edge cases found in the SOP review: exit codes, BOM/CRLF, bad input, API validation."""
+"""Edge cases found in the SOP review: exit codes, BOM/CRLF, bad input, API validation."""
 import json
 import subprocess
 import sys
