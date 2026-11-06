@@ -244,9 +244,9 @@ def test_round_accepts_integer_like_values_only():
 
 
 def test_safe_text_escapes_controls_bidi_zero_width():
-    evil = "ok\x1b[2J‮gnp.exe​\r\n\x00"
+    evil = "ok\x1b[2J\u202egnp.exe\u200b\r\n\x00"
     out = safe_text(evil)
-    assert out.isprintable() and "\x1b" not in out and "‮" not in out
+    assert out.isprintable() and "\x1b" not in out and "\u202e" not in out
     assert "\\x1b" in out and "\\u202e" in out and "\\u200b" in out
     assert safe_text("x" * 500, 20) == "x" * 17 + "..."
     assert safe_text("café \U0001f680") == "café \U0001f680"  # ordinary text untouched
@@ -260,11 +260,11 @@ def test_md_cell_cannot_break_table_or_inject_html():
 
 def test_hostile_label_is_neutralised_in_every_format(tmp_path, capsys):
     f = tmp_path / "r.json"
-    f.write_text(json.dumps([{"label": "x\x1b]0;pwned\x07‮|y", "trials": 10, "passes": 10}]), encoding="utf-8")
+    f.write_text(json.dumps([{"label": "x\x1b]0;pwned\x07\u202e|y", "trials": 10, "passes": 10}]), encoding="utf-8")
     for fmt in ("text", "markdown", "json"):
         main(["gate", str(f), "--threshold", "0.5", "--format", fmt])
         out = capsys.readouterr().out
-        assert "\x1b" not in out and "\x07" not in out and "‮" not in out, fmt
+        assert "\x1b" not in out and "\x07" not in out and "\u202e" not in out, fmt
 
 
 def test_error_messages_are_sanitised(tmp_path, capsys):

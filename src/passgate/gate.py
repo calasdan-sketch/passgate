@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import math
 import operator
+import time
 from dataclasses import dataclass, field
 from statistics import NormalDist
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .safe import md_cell, safe_text
 from .stats import (
+    FISHER_MAX_TRIALS,
     METHODS,
     fisher_exact_2x2,
     lower_bound,
@@ -20,6 +22,15 @@ from .stats import (
 )
 
 _METHOD_NAME = {"wilson": "Wilson", "exact": "Clopper-Pearson"}
+HINT_BUDGET = {"wilson": 1000, "exact": 25}  # failing rounds that get a "trials needed" hint
+HINT_SECONDS = 2.0  # and a wall-clock cap on hint computation; hints never change the verdict
+
+
+def _check_alpha(alpha: float) -> None:
+    # alpha > 0.5 would let both one-sided tails fall under alpha, so a worse or equal
+    # candidate could be called better (a common slip: typing 0.95 meaning confidence)
+    if not 0.0 < alpha <= 0.5:
+        raise ValueError("alpha must be in (0, 0.5], e.g. 0.05 (it is the false-positive rate, not the confidence)")
 
 
 @dataclass(frozen=True)
@@ -59,6 +70,7 @@ class RoundEval:
     method: str = "wilson"
     confidence: float = 0.95
     needed: Optional[Tuple[int, int]] = None  # (trials, passes) that would clear, for failing rounds
+    hint_skipped: bool = False  # True when the hint budget ran out before this round
 
     @property
     def wilson_lower(self) -> float:
@@ -81,6 +93,8 @@ class RoundEval:
             d["trials_needed"] = (
                 {"trials": self.needed[0], "passes": self.needed[1]} if self.needed else None
             )
+            if self.hint_skipped:
+                d["trials_needed_skipped"] = True
         return d
 
 
@@ -105,6 +119,8 @@ class GateResult:
     def _hint(self, r: RoundEval) -> str:
         if r.meets:
             return ""
+        if r.hint_skipped:
+            return "hint skipped (too many failing rounds)"
         if r.needed:
             return f"needs {r.needed[0]} trials at this rate ({r.needed[1]}+ passes)"
         if r.round.rate > self.threshold:
@@ -170,12 +186,18 @@ def evaluate_rounds(
     confidence: float = 0.95,
     min_rounds: int = 1,
     method: str = "wilson",
+    hint_budget: Optional[int] = None,
 ) -> GateResult:
     """Gate: EVERY round's lower confidence bound must clear ``threshold``.
 
     A flaky candidate that spikes on average but has one weak round fails -
     the "pass^N" property. ``method`` is 'wilson' (default) or 'exact'
     (Clopper-Pearson, never undercovers). Zero rounds never pass.
+
+    Failing rounds get a "trials needed" hint; ``hint_budget`` caps how many
+    (default: 1000 for Wilson, 25 for exact, whose search is far slower), and
+    hint computation also stops after ``HINT_SECONDS``. Skipped rounds are
+    marked ``hint_skipped``. The verdict never depends on hints.
     """
     if not 0.0 < threshold < 1.0:
         raise ValueError("threshold must be between 0 and 1")
@@ -184,20 +206,33 @@ def evaluate_rounds(
         raise ValueError("min_rounds must be >= 1")
     if method not in METHODS:
         raise ValueError(f"method must be one of {', '.join(METHODS)}")
+    budget = HINT_BUDGET[method] if hint_budget is None else hint_budget
+    if budget < 0:
+        raise ValueError("hint_budget must be >= 0")
     result = GateResult(threshold=threshold, confidence=confidence, min_rounds=min_rounds, method=method)
+    deadline = time.monotonic() + HINT_SECONDS
     for r in rounds:
         lower = lower_bound(r.passes, r.trials, confidence, method)
         meets = lower >= threshold
-        needed = None
+        needed, skipped = None, False
         if not meets:
-            needed = trials_needed(r.rate, threshold, confidence, method, max_trials=10**7)
+            if budget > 0 and time.monotonic() < deadline:
+                budget -= 1
+                needed = trials_needed(r.rate, threshold, confidence, method, max_trials=10**7)
+            else:
+                skipped = True
         result.rounds.append(
-            RoundEval(round=r, lower=lower, meets=meets, method=method, confidence=confidence, needed=needed)
+            RoundEval(
+                round=r, lower=lower, meets=meets, method=method, confidence=confidence,
+                needed=needed, hint_skipped=skipped,
+            )
         )
     return result
 
 
 def _verdict(p_greater: float, p_less: float, alpha: float) -> str:
+    if p_greater < alpha and p_less < alpha:  # cannot happen for alpha <= 0.5; fail closed anyway
+        return "inconclusive"
     if p_greater < alpha:
         return "candidate-better"
     if p_less < alpha:
@@ -211,16 +246,18 @@ class Comparison:
     baseline_rate: float
     z: float
     p_one_sided: float
-    fisher_p: float
+    fisher_p: Optional[float]  # None when the table exceeds FISHER_MAX_TRIALS
     alpha: float
-    fisher_p_one_sided: float = 1.0
+    fisher_p_one_sided: Optional[float] = 1.0
     test: str = "z"
     p_less: float = 1.0  # one-sided p for "baseline better" under the chosen test
 
     @property
     def p_value(self) -> float:
         """One-sided p (candidate better) under the chosen ``test``."""
-        return self.fisher_p_one_sided if self.test == "fisher" else self.p_one_sided
+        if self.test == "fisher":
+            return 1.0 if self.fisher_p_one_sided is None else self.fisher_p_one_sided
+        return self.p_one_sided
 
     @property
     def better(self) -> bool:
@@ -237,18 +274,22 @@ class Comparison:
             "test": self.test,
             "z": round(self.z, 6) if math.isfinite(self.z) else None,
             "p_one_sided": round(self.p_one_sided, 6),
-            "fisher_p": round(self.fisher_p, 6),
-            "fisher_p_one_sided": round(self.fisher_p_one_sided, 6),
+            "fisher_p": None if self.fisher_p is None else round(self.fisher_p, 6),
+            "fisher_p_one_sided": None if self.fisher_p_one_sided is None else round(self.fisher_p_one_sided, 6),
             "alpha": self.alpha,
             "verdict": self.verdict,
         }
+
+    def _fisher_text(self) -> str:
+        if self.fisher_p is None or self.fisher_p_one_sided is None:
+            return f"fisher p=n/a (over {FISHER_MAX_TRIALS:,} trials)"
+        return f"fisher p={self.fisher_p:.4g} (one-sided {self.fisher_p_one_sided:.4g})"
 
     def __str__(self) -> str:
         return (
             f"candidate {self.candidate_rate:.3f} vs baseline {self.baseline_rate:.3f} - "
             f"z={self.z:.3f}, one-sided p={self.p_one_sided:.4g}, "
-            f"fisher p={self.fisher_p:.4g} (one-sided {self.fisher_p_one_sided:.4g}), "
-            f"test: {self.test}, verdict: {self.verdict}"
+            f"{self._fisher_text()}, test: {self.test}, verdict: {self.verdict}"
         )
 
     def to_markdown(self) -> str:
@@ -256,8 +297,7 @@ class Comparison:
             f"### passgate compare: {self.verdict}\n\n"
             "| | candidate | baseline |\n|---|---|---|\n"
             f"| pass rate | {self.candidate_rate:.3f} | {self.baseline_rate:.3f} |\n\n"
-            f"z = {self.z:.3f}, one-sided p = {self.p_one_sided:.4g}; Fisher exact p = "
-            f"{self.fisher_p:.4g} (one-sided {self.fisher_p_one_sided:.4g}); "
+            f"z = {self.z:.3f}, one-sided p = {self.p_one_sided:.4g}; {self._fisher_text()}; "
             f"decided by **{self.test}** at alpha = {self.alpha:g}.\n"
         )
 
@@ -272,12 +312,13 @@ def compare(
 
     ``test`` picks what decides the verdict: 'z' (pooled two-proportion z-test,
     the default) or 'fisher' (one-sided Fisher exact - use it for small rounds).
+    ``alpha`` must be in (0, 0.5]. Fisher is reported only up to
+    ``FISHER_MAX_TRIALS`` total trials (None above that).
     If both arms ran on the SAME items, use :func:`compare_paired` instead.
     """
     if not candidate or not baseline:
         raise ValueError("compare needs at least one candidate round and one baseline round")
-    if not 0.0 < alpha < 1.0:
-        raise ValueError("alpha must be between 0 and 1")
+    _check_alpha(alpha)
     if test not in ("z", "fisher"):
         raise ValueError("test must be 'z' or 'fisher'")
     c1 = sum(r.passes for r in candidate)
@@ -286,8 +327,15 @@ def compare(
     n2 = sum(r.trials for r in baseline)
     z, p = two_proportion_z(c1, n1, c2, n2)
     table = (c1, n1 - c1, c2, n2 - c2)
-    f_two = fisher_exact_2x2(*table)
-    f_greater = fisher_exact_2x2(*table, alternative="greater")
+    f_two: Optional[float] = None
+    f_greater: Optional[float] = None
+    if n1 + n2 <= FISHER_MAX_TRIALS:
+        f_two = fisher_exact_2x2(*table)
+        f_greater = fisher_exact_2x2(*table, alternative="greater")
+    elif test == "fisher":
+        raise ValueError(
+            f"--test fisher is limited to {FISHER_MAX_TRIALS:,} total trials; use the z-test (default) at this size"
+        )
     if test == "fisher":
         p_less = fisher_exact_2x2(*table, alternative="less")
     else:
@@ -374,8 +422,7 @@ def compare_paired(pairs: Iterable[Tuple[bool, bool]], alpha: float = 0.05) -> P
     Uses only the items where the two disagree (exact binomial McNemar), which
     is far more sensitive than pooling when item difficulty varies.
     """
-    if not 0.0 < alpha < 1.0:
-        raise ValueError("alpha must be between 0 and 1")
+    _check_alpha(alpha)
     both = c_only = b_only = neither = 0
     for cand, base in pairs:
         if not isinstance(cand, bool) or not isinstance(base, bool):

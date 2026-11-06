@@ -83,7 +83,7 @@ passgate compare --candidate 9/10 --baseline 4/10 --alpha 0.02 --test fisher
 # ... one-sided p=0.009538, fisher p=0.05728 (one-sided 0.02864), test: fisher, verdict: inconclusive
 ```
 
-The verdict is `candidate-better`, `baseline-better` or `inconclusive`.
+The verdict is `candidate-better`, `baseline-better` or `inconclusive`. `--alpha` must be in (0, 0.5]. It is the false-positive rate, not the confidence, so a mistyped `--alpha 0.95` is rejected (exit 2) instead of letting a worse candidate pass.
 
 ### paired: same items, both arms (exact McNemar)
 
@@ -109,7 +109,7 @@ Input can be CSV, a JSON list, or JSONL (`.jsonl`/`.ndjson`) with `candidate` an
 - run: passgate gate rounds.json --threshold 0.9 --min-rounds 3 --github-summary
 ```
 
-`--github-summary` appends a Markdown table to the job summary (`$GITHUB_STEP_SUMMARY`). `--format markdown` prints the same table, for a PR comment. Labels and ids from your files are treated as untrusted. Terminal control codes, bidi overrides and zero-width characters are shown escaped (`\x1b`, `‮`). Markdown, HTML and table syntax is escaped too, so a hostile label cannot rewrite your logs or your job summary.
+`--github-summary` appends a Markdown table to the job summary (`$GITHUB_STEP_SUMMARY`). `--format markdown` prints the same table, for a PR comment. Labels and ids from your files are treated as untrusted. Terminal control codes, bidi overrides and zero-width characters are shown escaped (`\x1b`, `\u202e`). In Markdown output, every Markdown-significant punctuation mark is escaped too. That covers tables, HTML, `@mentions`, `:emoji:` codes, bare-URL autolinks and `#123` references, so a hostile label cannot rewrite your logs, fill your job summary or ping your team.
 
 ## Python API
 
@@ -154,7 +154,9 @@ What others do better: errorbars handles clustered questions and multi-model lea
 - Rounds are treated as independent samples of one pass rate. If rounds reuse the same test items, or items come in correlated clusters, the real uncertainty is larger than the bound shows. See [Miller 2024, "Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640) on clustered standard errors.
 - `compare` pools all rounds and does not model variance from one round to the next. Use `paired` when both arms share items.
 - `plan` and the failure hints give the *break-even* size. If your true rate equals `--rate`, a round of that size clears only about half the time.
-- Fisher p-values are exact (integer arithmetic) up to 5,000 total trials. Above that they use log-space sums, checked against SciPy to about 1e-7 relative error up to 10^8 total trials. Beyond that, accuracy degrades; use the z-test.
+- Fisher p-values are exact (integer arithmetic) up to 5,000 total trials. Above that they use log-space sums. The exact methods (Fisher, McNemar, Clopper-Pearson) are refused above 10^8 trials, where float precision degrades: `compare` then reports Fisher as n/a and decides by the z-test, and `--test fisher`, `paired` or `--method exact` exit 2. Wilson and the z-test have no such limit.
+- Accuracy is checked against SciPy by [`scripts/crosscheck_scipy.py`](scripts/crosscheck_scipy.py) (`pip install -e ".[dev]"`; SciPy is a dev-only oracle, never a runtime dependency). The test suite runs a quick version when SciPy is installed. A recent full run gave worst errors of about 5e-13 (Clopper-Pearson), 2e-10 (Fisher, up to about 58,000 trials) and 2e-10 (McNemar, up to 10^5 items). Accuracy between that and 10^8 was spot-checked by hand at about 1e-7 relative, but not by the script.
+- With `--method exact`, "trials needed" hints are computed for at most 25 failing rounds and 2 seconds in total. The rest say "hint skipped". Hints never affect the verdict.
 - If an LLM judge decides pass/fail, the judge's own noise is inside your counts. passgate cannot separate it out.
 
 ## License

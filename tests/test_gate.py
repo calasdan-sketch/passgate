@@ -1,4 +1,4 @@
-﻿"""Gate logic and CLI tests."""
+"""Gate logic and CLI tests."""
 import json
 
 import pytest

@@ -28,6 +28,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+# dev only: scipy is a test oracle (scripts/crosscheck_scipy.py), never a runtime dependency
+dev = ["pytest", "ruff", "scipy"]
+
 [project.scripts]
 passgate = "passgate.cli:main"
 

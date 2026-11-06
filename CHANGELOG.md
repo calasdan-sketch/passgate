@@ -2,6 +2,16 @@
 
 ## 0.2.0 (unreleased)
 
+### Fixed after panel review
+- `alpha` must be in (0, 0.5] for `compare` and `paired` (CLI exit 2 otherwise). Before, `--alpha 0.95` (typed as a confidence level) could report a worse or equal candidate as `candidate-better`. The verdict is also inconclusive if both one-sided tails fall under alpha.
+- Huge counts: Fisher is skipped (reported as `null` / n/a) above 10^8 total trials, so `compare` stays instant. `--test fisher` is refused at that size, and so are exact McNemar and Clopper-Pearson, whose float precision degrades there.
+- Exact McNemar on up to 5,000 discordant items is now linear (an incremental binomial coefficient), not quadratic.
+- Gate hints have a budget: 1000 failing rounds for Wilson, 25 for exact, and 2 s of wall-clock time. Skipped rounds say "hint skipped" (`trials_needed_skipped` in JSON). New `hint_budget=` argument. The verdict is unaffected.
+- README contained a literal U+202E. Test files contained literal bidi and filler characters; they are now `\uXXXX` escapes. A new test scans docs, sources, tests and CI config for invisible characters.
+- Added `scripts/crosscheck_scipy.py` and a `dev` extra (`pytest`, `ruff`, `scipy`). The test suite runs a quick cross-check when SciPy is present. README accuracy claims now point at it.
+- The `clopper_pearson_interval` docstring no longer claims it is always wider than Wilson; it is not near k = n.
+- Markdown cells now escape all Markdown-significant ASCII punctuation, defusing `@mentions`, `:emoji:`, bare-URL/`www.` autolinks, `#123` references and HTML entities. Blank "filler" letters (U+3164, U+115F, U+1160, U+FFA0, U+2800, U+17B4/5, U+180E) are escaped in all output.
+
 ### Added
 - `--method exact` on `gate`: Clopper-Pearson lower bound. Its coverage is never below nominal (checked by an exact coverage test). Stdlib only: regularized incomplete beta plus a bracketed Illinois root finder, cross-checked against SciPy to about 1e-12.
 - `passgate plan --rate R --threshold T [--rounds N]`: the smallest round size that certifies `T` at rate `R`, plus the passes needed. Minimality is verified by brute force in the tests.

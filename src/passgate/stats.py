@@ -15,6 +15,10 @@ from typing import Optional, Tuple
 _NORMAL = NormalDist()
 METHODS = ("wilson", "exact")
 _EXACT_INT_LIMIT = 5000  # tables up to this size use exact big-integer arithmetic
+# Above this many trials the exact methods (Fisher, McNemar, Clopper-Pearson) are refused:
+# lgamma-based sums lose precision (about 1e-7 relative at 1e8, 1e-6 at 1e9) and Fisher is O(sqrt n).
+EXACT_MAX_TRIALS = 10**8
+FISHER_MAX_TRIALS = EXACT_MAX_TRIALS
 
 
 def z_for_confidence(confidence: float) -> float:
@@ -145,9 +149,15 @@ def _cp_upper(k: float, n: float, alpha: float) -> float:
 
 
 def clopper_pearson_interval(passes: int, trials: int, confidence: float = 0.95) -> Tuple[float, float]:
-    """Two-sided Clopper-Pearson ("exact") interval. Never undercovers; wider than Wilson."""
+    """Two-sided Clopper-Pearson ("exact") interval.
+
+    Its coverage is never below nominal. It is usually wider than Wilson, but
+    not always (near k = n at large n its lower bound can sit above Wilson's).
+    """
     _check_counts(passes, trials)
     z_for_confidence(confidence)
+    if trials > EXACT_MAX_TRIALS:
+        raise ValueError(f"the exact method is limited to {EXACT_MAX_TRIALS:,} trials; use --method wilson")
     alpha = 1.0 - confidence
     return _cp_lower(passes, trials, alpha), _cp_upper(passes, trials, alpha)
 
@@ -207,6 +217,8 @@ def trials_needed(
     z_for_confidence(confidence)
     if rate <= threshold:
         return None
+    if method == "exact":
+        max_trials = min(max_trials, EXACT_MAX_TRIALS)
 
     def ok(n: int) -> bool:
         return _lower_real(rate, n, confidence, method) >= threshold
@@ -271,6 +283,8 @@ def fisher_exact_2x2(a: int, b: int, c: int, d: int, alternative: str = "two-sid
     n = a + b + c + d
     if n == 0:
         raise ValueError("table is empty")
+    if n > FISHER_MAX_TRIALS:
+        raise ValueError(f"Fisher's exact test is limited to {FISHER_MAX_TRIALS:,} total trials; use the z-test")
     row1, col1 = a + b, a + c
     lo, hi = max(0, row1 + col1 - n), min(row1, col1)
     if alternative == "greater":
@@ -360,7 +374,11 @@ def binom_sf_half(k: int, m: int) -> float:
     if k > m:
         return 0.0
     if m <= _EXACT_INT_LIMIT:
-        return sum(math.comb(m, x) for x in range(k, m + 1)) / (1 << m)
+        term, total = math.comb(m, k), 0
+        for x in range(k, m + 1):  # C(m, x+1) = C(m, x) * (m - x) / (x + 1), exact in integers
+            total += term
+            term = term * (m - x) // (x + 1)
+        return total / (1 << m)
     return betainc(k, m - k + 1.0, 0.5)
 
 
@@ -376,4 +394,6 @@ def mcnemar_exact(cand_only: int, base_only: int) -> Tuple[float, float]:
     m = cand_only + base_only
     if m == 0:
         return 1.0, 1.0
+    if m > EXACT_MAX_TRIALS:
+        raise ValueError(f"exact McNemar is limited to {EXACT_MAX_TRIALS:,} discordant items")
     return binom_sf_half(cand_only, m), binom_sf_half(base_only, m)
