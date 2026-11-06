@@ -26,6 +26,8 @@ jobs:
         run: |
           passgate --version
           python -m passgate --version
+          passgate plan --rate 0.95 --threshold 0.9
+          passgate compare --candidate 93/100 --baseline 85/100 --test fisher --format markdown
       - name: Build
         run: python -m build
       - name: Twine check

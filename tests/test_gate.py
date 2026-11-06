@@ -18,7 +18,7 @@ def test_strong_candidate_passes():
 
 
 def test_flaky_candidate_fails_even_with_high_average():
-    # average pass rate 89%, but one weak round kills the run â€” the pass^N property
+    # average pass rate 89%, but one weak round kills the run - the pass^N property
     result = evaluate_rounds(rounds((99, 100), (99, 100), (70, 100)), threshold=0.85)
     assert not result.passed
     assert not result.rounds[2].meets

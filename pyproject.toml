@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "passgate"
-version = "0.1.1"
+version = "0.2.0"
 description = "Statistical pass^N gate: require an eval candidate to clear a Wilson-bound bar on every round, not just on average"
 readme = "README.md"
 requires-python = ">=3.9"
