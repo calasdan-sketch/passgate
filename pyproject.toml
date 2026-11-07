@@ -18,6 +18,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -27,6 +28,11 @@ classifiers = [
     "Topic :: Software Development :: Testing",
     "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/calasdan-sketch/passgate"
+Issues = "https://github.com/calasdan-sketch/passgate/issues"
+Changelog = "https://github.com/calasdan-sketch/passgate/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # dev only: scipy and statsmodels are test oracles, numpy runs benchmarks/bench_gates.py; none is a runtime dependency

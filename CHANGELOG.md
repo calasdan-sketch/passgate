@@ -2,6 +2,31 @@
 
 ## 0.3.0 (unreleased)
 
+### Round 4 (still 0.3.0, unreleased): the stranger's first hour
+
+Specialists: first-time user (README only, clean venv), release engineer, supply-chain reviewer, docs writer, CI integrator, hostile-input fuzzer, performance engineer, competitor maintainer, Windows reviewer (read the code; nothing was run on Windows). Written up in `docs/ROUND4.md`. One agent played all the roles; no independent reviewers were available.
+
+Found by running things:
+- The PyPI release is 0.1.1 (only `gate` and `compare`), so `pip install passgate` followed by the README failed at `plan`, `regress` and everything else. The README now says so and gives the GitHub / checkout install until 0.3.0 is published.
+- The sdist left out `CHANGELOG.md` and `scripts/`, so the test suite failed when run from the sdist. Added `MANIFEST.in` (the sdist now carries docs, benchmarks, scripts, tests, CHANGELOG and `action.yml`).
+- Package metadata had no project URLs (PyPI page showed no repository or issue tracker); added Homepage, Issues, Changelog.
+- Ctrl-C printed a traceback. Now `passgate: interrupted`, exit 130.
+- A full disk, an unwritable output or a closed pipe variant other than `BrokenPipeError` was reported as "internal error ... please report it". Now a plain message, exit 2.
+- JUnit XML declared UTF-8 but was printed in the console's encoding, so a non-ASCII label turned into `?` on a legacy console. It is now pure ASCII with numeric character references (well-formed under any encoding).
+- Text output on a console that cannot show a character used `?`; it now prints the character code (`caf\xe9`).
+- Windows: PowerShell 5 writes UTF-16 for `command > file`; every reader rejected it as "not valid UTF-8". UTF-16 with a byte-order mark is now accepted. cmd.exe and PowerShell do not expand `*.json`; `gate` now does, when no file of that exact name exists.
+- Errors about standard input read `- round 1: ...`; they now say `standard input round 1`.
+
+Added:
+- `passgate example rounds|paired|cases|outcomes [-o FILE]`: prints or writes a small synthetic input file (never overwrites; `-o -` is the screen). The README quick start no longer depends on a Unix heredoc.
+- `--help` lists all exit codes (0, 1, 2, 130) and points new users at `example`.
+- `scripts/smoke_wheel.py`: installs a built wheel into a new venv (path with a space) and runs the quick start and every entry point. CI runs it after `python -m build`, plus ruff, plus Python 3.10-3.13.
+- `tests/test_round4.py` (32 tests). Among them: every `# output` comment and the quick-start output block in the README are compared with what the program prints, and the README heredoc is compared with `passgate example rounds`, so the docs cannot go stale silently. Version, CHANGELOG heading and README table are checked for agreement.
+
+Upgrading from 0.1.1 (the PyPI release): `compare` can now report `baseline-better`, `--alpha` above 0.5 is refused (exit 2), `Round` rejects booleans and fractional counts, and many commands are new. Scripts that only used `gate` and `compare` with valid input behave the same. Recommended release: 0.3.0 (0.2.0 was never published).
+
+Not done: SARIF output, per-cell stochasticity audit, bootstrap intervals and plots, paired-design planning for `regress`, judge-noise modelling, pinning GitHub Actions by commit hash (could not be looked up offline), a publish workflow (Trusted Publishing), anything run on Windows or Python 3.9/3.10 (neither is installed here; syntax was checked for 3.9 only).
+
 ### Round 3 (still 0.3.0, unreleased)
 
 Specialists: release engineer using only the README, attacker (hostile files and output), performance engineer, Windows/CI maintainer, statistician auditing claims, competitor engineer, docs lead. Two passes: test and fix, then try to break the fixes.
@@ -47,7 +72,7 @@ Expert round 2 (statistician, LLM-eval practitioner, CI/DevEx lead, data enginee
 - `safe_text` also escapes lone surrogates (so XML and terminal output stay well-formed).
 - dev extra now includes `statsmodels` and `numpy` (oracle and benchmark only; runtime stays dependency-free).
 
-## 0.2.0 (unreleased)
+## 0.2.0 (never released; folded into 0.3.0)
 
 ### Fixed after panel review
 - `alpha` must be in (0, 0.5] for `compare` and `paired` (CLI exit 2 otherwise). Before, `--alpha 0.95` (typed as a confidence level) could report a worse or equal candidate as `candidate-better`. The verdict is also inconclusive if both one-sided tails fall under alpha.

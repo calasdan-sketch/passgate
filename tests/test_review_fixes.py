@@ -118,6 +118,8 @@ def test_repo_text_files_have_no_invisible_characters():
     files = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "pyproject.toml"]
     files += sorted((ROOT / "src").rglob("*.py")) + sorted((ROOT / "tests").rglob("*.py"))
     files += sorted((ROOT / "scripts").rglob("*.py")) + sorted((ROOT / ".github").rglob("*.yml"))
+    files += sorted((ROOT / "docs").rglob("*.md")) + [ROOT / "PUBLISH-CHECKLIST.md", ROOT / "MANIFEST.in", ROOT / "action.yml"]
+    files = [f for f in files if f.exists()]  # an sdist or checkout may lack some of them
     bad = {}
     for f in files:
         text = f.read_text(encoding="utf-8")

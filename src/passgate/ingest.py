@@ -187,10 +187,12 @@ def read_text(path: str) -> str:
 def _decode(data: bytes, what: str) -> str:
     if len(data) > MAX_FILE_BYTES:
         raise IngestError(f"{what} is larger than {MAX_FILE_BYTES >> 20} MiB")
+    # Windows PowerShell 5 writes UTF-16 (with a byte-order mark) for `command > file`; accept that too
+    codec = "utf-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") and data[:4] != b"\xff\xfe\x00\x00" else "utf-8-sig"
     try:
-        text = data.decode("utf-8-sig")
+        text = data.decode(codec)
     except UnicodeDecodeError:
-        raise IngestError(f"{what} is not valid UTF-8 text") from None
+        raise IngestError(f"{what} is not valid UTF-8 (or UTF-16 with a byte-order mark) text") from None
     if "\x00" in text:
         raise IngestError(f"{what} contains NUL bytes; it is not a text results file")
     return text

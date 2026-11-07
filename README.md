@@ -8,11 +8,13 @@ Eval flakiness is the quiet killer. A prompt scores 91% once, ships, and regress
 pip install passgate          # Python 3.9+, standard library only
 ```
 
+> **Release status.** The newest version on PyPI at the time of writing is 0.1.1, which has only `gate` and `compare`. This README describes 0.3.0 (the version in this repository), which is not on PyPI yet. Until it is, install it from GitHub, `pip install git+https://github.com/calasdan-sketch/passgate.git`, or from a checkout, `pip install .`. Check with `passgate --version`.
+
 Also runnable as `python -m passgate ...`.
 
 ## Quick start (60 seconds)
 
-Write the round results your eval runner produced. This example is synthetic:
+Write the round results your eval runner produced. This example is synthetic. On Windows, where the `cat <<EOF` line below does not work, run `passgate example rounds -o rounds.json` instead; it writes the identical file.
 
 ```bash
 cat > rounds.json <<'EOF'
@@ -51,8 +53,9 @@ Exit code `1` fails CI. Every failing round says what would fix it. **93/100 doe
 | `items FILE` | Pass rate / pass^k when each item is tried several times | cluster-aware lower bound clears the bar |
 | `cases FILE` | Which of many cases regressed? (multiple-testing control) | no supported regression |
 | `arms FILE` | Which prompts / providers does this promptfoo or Inspect file hold? | always |
+| `example KIND` | Print (or `-o FILE` write) a small synthetic input file: `rounds`, `paired`, `cases` or `outcomes` | always |
 
-All commands exit `2` on bad input (missing file, bad JSON/CSV, invalid number, duplicate item, empty file, a file over 256 MiB, NUL bytes) and on any unexpected internal error, so a typo or a crash is never mistaken for a model regression, and an empty input never passes. Every file argument also accepts `-` for standard input (`cat rounds.json | passgate gate -`), and CSV may use `,`, `;`, tab or `|` as the separator. Commands that judge a result (`gate`, `compare`, `paired`, `regress`, `sequential`, `items`, `cases`) accept `--format text|json|markdown|junit`, `--explain` (a plain-English paragraph for people who do not read confidence intervals) and `--github-summary`. JSON output carries `passgate_version`. `compare`, `paired` and `regress` also take `--inconclusive-exit CODE` (1, or 3 to 125) so CI can tell "needs more data" from "worse".
+Exit codes: `0` pass, `1` did not pass, `2` bad input or any unexpected error, `130` interrupted with Ctrl-C. All commands exit `2` on bad input (missing file, bad JSON/CSV, invalid number, duplicate item, empty file, a file over 256 MiB, NUL bytes) and on any unexpected internal error, so a typo or a crash is never mistaken for a model regression, and an empty input never passes. Every file argument also accepts `-` for standard input (`cat rounds.json | passgate gate -`), and `gate` expands `*`/`?` patterns itself when the shell does not (cmd.exe and PowerShell never do: `passgate gate runs\*.json`; a file whose real name contains those characters still works). Files may be UTF-8 (BOM or not) or UTF-16 with a byte-order mark, which is what Windows PowerShell 5 writes for `command > file`. CSV may use `,`, `;`, tab or `|` as the separator. Commands that judge a result (`gate`, `compare`, `paired`, `regress`, `sequential`, `items`, `cases`) accept `--format text|json|markdown|junit`, `--explain` (a plain-English paragraph for people who do not read confidence intervals) and `--github-summary`. JSON output carries `passgate_version`. `compare`, `paired` and `regress` also take `--inconclusive-exit CODE` (1, or 3 to 125) so CI can tell "needs more data" from "worse".
 
 ### gate
 
@@ -64,6 +67,13 @@ passgate gate rounds.json --threshold 0.9 --min-rounds 3 [--method exact] [--con
 - `--method wilson` (default) uses the Wilson score bound. `--method exact` uses the Clopper-Pearson bound, which never undercovers: its one-sided coverage is at least nominal for every true rate (the test suite checks this). Wilson can dip slightly below nominal for some rates.
 - `--json` (or `--format json`) gives machine-readable output, including `trials_needed` for each failing round.
 - Several files are joined into one list of rounds. With `--per-trial`, each file is a *raw results file* (promptfoo, Inspect, or CSV/JSONL with one outcome per row) and becomes ONE round, so three eval runs need no glue script: `passgate gate run1.json run2.json run3.json --per-trial --min-rounds 3`. Pick a prompt or provider with `--arm`. If items inside a file were tried more than once, `gate` warns on stderr that its bound is too optimistic and points to `items`.
+
+### bound: what does "30 out of 30" actually prove?
+
+```bash
+passgate bound 30/30
+# 30/30 = 1.000: the true pass rate is between 0.884 and 1.000 (95%, exact); Wilson says 0.886 to 1.000. The failure rate could still be as high as 11.6%.
+```
 
 ### plan: size your eval before you burn tokens
 
@@ -106,6 +116,7 @@ q002,1,0
 q003,0,1
 EOF
 passgate paired results.csv
+# paired: 3 items, candidate 0.667 vs baseline 0.667 - fixed 1, broke 1, exact McNemar one-sided p=0.75, verdict: inconclusive
 ```
 
 Input can be CSV, a JSON list, or JSONL (`.jsonl`/`.ndjson`) with `candidate` and `baseline` fields. Values may be `1/0`, `true/false`, `pass/fail` or `yes/no`. The `item` (or `id`) field is optional, but a duplicate id is rejected so an item cannot be counted twice. Example from the test suite (200 shared items, 12 fixed, 2 broken): pooled `compare` says *inconclusive*, while `paired` says *candidate-better* (p < 0.01).
@@ -137,8 +148,9 @@ How many trials is enough? Ask before you run:
 
 ```bash
 passgate plan-regress --margin 0.05 --baseline-rate 0.9              # trials per arm
-passgate plan-regress --baseline-rate 0.9 --trials 300               # or: what margin can 300 trials per arm prove?
 # plan-regress: run 451 trials per arm (902 in total). A candidate whose true rate is 0.900 against a baseline at 0.900 is then declared not worse than 0.05 80.2% of the time (one-sided alpha 0.05).
+passgate plan-regress --baseline-rate 0.9 --trials 300               # or: what margin can 300 trials per arm prove?
+# plan-regress: with 300 trials per arm, 'regress' can prove the candidate is not worse than about 6.1 points (80% chance if the true rates are 0.900 and 0.900; one-sided alpha 0.05). A smaller margin needs more trials.
 ```
 
 The power is exact binomial arithmetic over every outcome (checked against simulation in the benchmark, section 6). The size comes from a geometric search plus bisection, so a slightly smaller one may also reach the target. It assumes independent samples (different items per arm) and searches up to 20,000 trials per arm. At a true drop of exactly the margin, `regress` passes about 5.1% of the time, a hair over the nominal 5%, because the Newcombe interval is an approximation.
@@ -274,7 +286,7 @@ The honest cost: passgate is strict. With few trials it blocks good candidates (
 - `gate` treats trials in a round as independent. If rounds reuse the same test items, or items are tried several times, the real uncertainty is larger than the bound shows. Use `items` for repeated trials; see [Miller 2024, "Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640). The `items` bound uses an estimated design effect, so it is itself approximate with few items (under about 20) and the pass^k interval is a t-interval over per-item estimates, not exact.
 - `sequential` and `regress` need real sample sizes. Tiny streams never certify, and equal prompts pass `regress` only about half the time at 200 trials per arm and a 5-point margin. `plan-regress` sizes the independent-samples design only (not the paired one) and stops at 20,000 trials per arm.
 - Files are read whole: the cap is 256 MiB, a CSV cell may be 1 MiB, and about a million rows take around ten seconds to parse. Parsing speed was measured on one shared machine, not benchmarked.
-- Windows: CRLF, BOM and `;`-separated CSV are tested; Windows-style path handling (labels from `--per-trial` file names use the OS's own basename rule) was not run on Windows.
+- Windows: nothing in passgate has been run on Windows. CI is set up to run the tests and a fresh-venv wheel smoke test on `windows-latest`, but that workflow has not run on GitHub yet. What was checked by reading the code: no `shell=True`, no signals, no file replacement, files opened in binary and decoded as UTF-8 or UTF-16 (BOM) so a PowerShell 5 redirect works; CRLF, BOM and `;`-separated CSV are tested; console encodings that cannot show a character (cp1252, ASCII) were simulated on Linux and print `\xe9` or `\u65e5` instead of failing; file patterns such as `runs\*.json` are expanded by passgate itself. Labels from `--per-trial` use the OS's own basename rule, which is untested on Windows.
 - The `sequential` any-time guarantee is for a fixed bar and a stream of independent trials. It does not cover changing the bar after seeing data, and its bound (`anytime_lower`) is wider than a fixed-size Wilson bound by design.
 - The promptfoo and Inspect readers follow public docs and the published log schema; they are tested on synthetic files in that shape, not on every version of those tools. Unrecognised data fails closed. JUnit and the GitHub Action cover the common cases; there is no SARIF output.
 - `compare` pools all rounds and does not model variance from one round to the next. Use `paired` when both arms share items.

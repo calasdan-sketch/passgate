@@ -5,6 +5,7 @@ Exit codes: 0 = pass, 1 = gate/comparison did not pass, 2 = bad input or usage.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -82,32 +83,33 @@ def load_rounds(path: str) -> List[Round]:
     """
     text = read_text(path)
     rounds: List[Round] = []
+    shown = "standard input" if path == "-" else safe_text(path)
     if not text.strip():
-        raise InputError(f"{'standard input' if path == '-' else safe_text(path)} is empty")
+        raise InputError(f"{shown} is empty")
     if kind_of(path, text) == "csv":
-        for i, row in enumerate(csv_records(text, safe_text(path)), start=1):
+        for i, row in enumerate(csv_records(text, shown), start=1):
             trials = row.get("trials") if row.get("trials") not in (None, "") else row.get("n")
             passes = row.get("passes") if row.get("passes") not in (None, "") else row.get("k")
             if trials is None and passes is None:
                 raise InputError(
-                    f"{safe_text(path)}: no 'trials' and 'passes' columns (found: "
+                    f"{shown}: no 'trials' and 'passes' columns (found: "
                     + ", ".join(safe_text(k, 20) for k in list(row)[:6]) + "). A per-trial results file? "
                     "Give it to gate with --per-trial."
                 )
             rounds.append(
-                _make_round(trials, passes, (row.get("label") or "").strip(), f"{safe_text(path)} row {i}")
+                _make_round(trials, passes, (row.get("label") or "").strip(), f"{shown} row {i}")
             )
         return rounds
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
-        raise InputError(f"{safe_text(path)} is not valid JSON: {safe_text(e)}") from None
+        raise InputError(f"{shown} is not valid JSON: {safe_text(e)}") from None
     except RecursionError:
-        raise InputError(f"{safe_text(path)}: JSON is nested too deeply") from None
+        raise InputError(f"{shown}: JSON is nested too deeply") from None
     if not isinstance(data, list):
-        raise InputError(f"{safe_text(path)}: expected a JSON list of rounds")
+        raise InputError(f"{shown}: expected a JSON list of rounds")
     for i, item in enumerate(data, start=1):
-        where = f"{safe_text(path)} round {i}"
+        where = f"{shown} round {i}"
         if isinstance(item, dict):
             rounds.append(
                 _make_round(item.get("trials"), item.get("passes"), str(item.get("label", "")), where)
@@ -202,7 +204,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="passgate",
         description="Require an eval candidate to clear a Wilson-bound pass bar on EVERY round.",
-        epilog="Exit codes: 0 pass, 1 fail / not significant, 2 bad input.",
+        epilog=(
+            "Exit codes: 0 pass, 1 fail / not significant / inferior, 2 bad input or usage, 130 interrupted "
+            "(compare, paired and regress can give 'inconclusive' its own code with --inconclusive-exit). "
+            "New here? Run 'passgate example rounds -o rounds.json' and then 'passgate gate rounds.json'."
+        ),
     )
     ap.add_argument("--version", action="version", version=f"passgate {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -291,6 +297,13 @@ def _build_parser() -> argparse.ArgumentParser:
     ar.add_argument("--from", dest="src", choices=FORMATS, default="auto")
     ar.add_argument("--scorer")
 
+    ex = sub.add_parser(
+        "example",
+        help="print a small synthetic input file (works the same on Windows, macOS and Linux)",
+    )
+    ex.add_argument("kind", choices=sorted(_EXAMPLES), help="which sample: " + ", ".join(sorted(_EXAMPLES)))
+    ex.add_argument("-o", "--output", metavar="FILE", help="write to FILE (UTF-8) instead of the screen; never overwrites; - means the screen")
+
     oc = sub.add_parser("oc", help="operating characteristic: chance the gate passes at each true pass rate")
     oc.add_argument("--trials", type=int, required=True, help="trials per round")
     oc.add_argument("--threshold", type=float, default=0.9)
@@ -359,8 +372,29 @@ def _add_output(p: argparse.ArgumentParser) -> None:
     )
 
 
+_GLOB_CHARS = set("*?[")
+
+
+def expand_files(files: List[str]) -> List[str]:
+    """Expand ``*``/``?``/``[..]`` patterns that the shell left alone (cmd.exe and PowerShell never expand them).
+
+    A name that exists is used as it is, so a file literally called ``a[1].json`` still works. A pattern
+    that matches nothing is an error, never an empty list. Matches are sorted so the order is stable.
+    """
+    out: List[str] = []
+    for f in files:
+        if f == "-" or os.path.exists(f) or not (_GLOB_CHARS & set(f)):
+            out.append(f)
+            continue
+        hits = sorted(glob.glob(f))
+        if not hits:
+            raise InputError(f"no file matches {safe_text(f)}")
+        out.extend(hits)
+    return out
+
+
 def _gate_rounds(args: argparse.Namespace) -> List[Round]:
-    files = args.rounds
+    files = expand_files(args.rounds)
     if files.count("-") > 1:
         raise InputError("standard input ('-') can be used only once")
     if not args.per_trial:
@@ -610,6 +644,32 @@ def _paired_data(args: argparse.Namespace) -> List[Tuple[bool, bool]]:
     return load_pairs(path)
 
 
+_EXAMPLES = {
+    "rounds": (
+        '[\n  { "label": "core-set",    "trials": 100, "passes": 93  },\n'
+        '  { "label": "adversarial", "trials": 100, "passes": 70  },\n'
+        '  { "label": "regression",  "trials": 120, "passes": 116 }\n]\n'
+    ),
+    "paired": "item,candidate,baseline\nq001,1,1\nq002,1,0\nq003,0,1\n",
+    "cases": "case,cand_passes,cand_trials,base_passes,base_trials\na,10,20,19,20\nb,18,20,19,20\n",
+    "outcomes": "0\n" + "1\n" * 79,
+}
+
+
+def _example(args: argparse.Namespace) -> int:
+    text = _EXAMPLES[args.kind]
+    if not args.output or args.output == "-":
+        sys.stdout.write(text)
+        return 0
+    try:
+        with open(args.output, "x", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+    except FileExistsError:
+        raise InputError(f"{safe_text(args.output)} already exists; passgate will not overwrite it") from None
+    print(f"passgate: wrote {safe_text(args.output)} (synthetic example data, not real results)", file=sys.stderr)
+    return 0
+
+
 def _arms(args: argparse.Namespace) -> int:
     arms = load_arms(args.results, args.src, args.scorer)
     for name in sorted(arms):
@@ -626,7 +686,8 @@ def _emit(text: str) -> None:
         print(text)
     except UnicodeEncodeError:
         enc = getattr(sys.stdout, "encoding", None) or "ascii"
-        print(text.encode(enc, errors="replace").decode(enc))
+        # keep what the character was (\xe9) instead of a bare "?" when the console cannot show it
+        print(text.encode(enc, errors="backslashreplace").decode(enc))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -651,6 +712,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return _plan_regress(args)
         if args.cmd == "arms":
             return _arms(args)
+        if args.cmd == "example":
+            return _example(args)
         if args.cmd == "sequential":
             res = run_sequential(_load_stream(args.outcomes), args.threshold, args.alpha, args.max_trials)
             _render(args, res)
@@ -693,6 +756,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             sys.stdout = open(os.devnull, "w")  # keep the interpreter's exit flush quiet
         except OSError:
             pass
+        return 2
+    except KeyboardInterrupt:  # Ctrl-C: no traceback; 130 is the shell convention (128 + SIGINT)
+        print("passgate: interrupted", file=sys.stderr)
+        return 130
+    except OSError as e:  # disk full, permission, a closed output: an environment problem, not a bug in passgate
+        print(f"passgate: cannot read or write: {safe_text(e.strerror or e, 200)}", file=sys.stderr)
         return 2
     except MemoryError:
         print("passgate: out of memory; the input is too large", file=sys.stderr)

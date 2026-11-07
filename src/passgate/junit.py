@@ -19,7 +19,10 @@ def _suite(name: str, cases: List[Tuple[str, bool, str]]) -> str:
             ET.SubElement(tc, "failure", message=safe_text(msg, 300)).text = safe_text(msg, 2000)
     if hasattr(ET, "indent"):
         ET.indent(root)
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
+    # ASCII with numeric character references: valid under the declared encoding, and it survives
+    # any console or redirect encoding (a Windows code page would otherwise mangle non-ASCII labels)
+    body = ET.tostring(root, encoding="ascii").decode("ascii")
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + body.split("?>", 1)[-1].lstrip("\n") + "\n"
 
 
 def to_junit(obj: Any) -> str:
