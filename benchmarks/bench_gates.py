@@ -26,6 +26,8 @@ from passgate.noninf import (  # noqa: E402
     newcombe_diff,
     newcombe_paired_diff,
     non_inferiority,
+    plan_noninferiority,
+    regress_power,
 )
 from passgate.power import pass_probability, plan_power  # noqa: E402
 from passgate.sequential import _futility_floor, pass_boundary  # noqa: E402
@@ -187,6 +189,27 @@ def bench_cases() -> Dict[str, Any]:
     return {"cases": cases, "trials_per_arm": n, "alpha": alpha, "reps": reps, "scenarios": out}
 
 
+# ---------------------------------------------------------------- 6. planning the regression gate
+def bench_plan_regress() -> Dict[str, Any]:
+    """Does `plan-regress` deliver? Exact power vs simulated pass share at the planned size, and the false pass
+    when the candidate is truly `margin` worse (it must stay under alpha)."""
+    rng = np.random.default_rng(SEED + 6)
+    reps, base = 6000, 0.90
+    rows = []
+    for margin in (0.03, 0.05, 0.08):
+        plan = plan_noninferiority(base, base, margin, power=0.8)
+        n = plan["trials_per_arm"]
+        out = {"margin": margin, "trials_per_arm": n, "exact_power": plan["power_at_trials"]}
+        for tag, cand_p in (("simulated_power_equal", base), ("simulated_false_pass_at_margin", base - margin)):
+            c = rng.binomial(n, cand_p, size=reps)
+            b = rng.binomial(n, base, size=reps)
+            hit = sum(newcombe_diff(int(c[i]), n, int(b[i]), n, 0.9)[0] > -margin for i in range(reps))
+            out[tag] = hit / reps
+        out["exact_false_pass_at_margin"] = regress_power(n, base - margin, base, margin)
+        rows.append(out)
+    return {"reps": reps, "baseline": base, "rows": rows}
+
+
 def render(res: Dict[str, Any]) -> str:
     L: List[str] = ["# passgate benchmark results", "",
                     f"Seed base {SEED}, NumPy {np.__version__}, {REPS} repetitions for sections 1-2 "
@@ -235,6 +258,12 @@ def render(res: Dict[str, Any]) -> str:
     for scen, d in m["scenarios"].items():
         for meth, v in d.items():
             L.append(f"| {scen} | {meth} | {pct(v['any_false_alarm'])} | {pct(v['share_of_real_regressions_found'])} |")
+    q = res["plan_regress"]
+    L += ["", f"## 6. Planning the regression gate (`plan-regress`, baseline {q['baseline']}, power target 80%, {q['reps']} repetitions)", "",
+          "| margin | trials per arm | exact power | simulated power (equal prompts) | exact false pass at a true drop of `margin` | simulated |", "|---|---|---|---|---|---|"]
+    for r in q["rows"]:
+        L.append(f"| {r['margin']} | {r['trials_per_arm']} | {pct(r['exact_power'])} | {pct(r['simulated_power_equal'])} | "
+                 f"{pct(r['exact_false_pass_at_margin'])} | {pct(r['simulated_false_pass_at_margin'])} |")
     return "\n".join(L) + "\n"
 
 
@@ -242,7 +271,7 @@ def main() -> None:
     t0 = time.time()
     res = {"seed": SEED, "numpy": np.__version__, "python": sys.version.split()[0]}
     for name, fn in (("fixed", bench_fixed), ("sequential", bench_sequential), ("cluster", bench_cluster),
-                     ("regress", bench_regress), ("cases", bench_cases)):
+                     ("regress", bench_regress), ("cases", bench_cases), ("plan_regress", bench_plan_regress)):
         t = time.time()
         res[name] = fn()
         print(f"{name}: {time.time() - t:.1f}s", flush=True)

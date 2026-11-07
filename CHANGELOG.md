@@ -2,6 +2,32 @@
 
 ## 0.3.0 (unreleased)
 
+### Round 3 (still 0.3.0, unreleased)
+
+Specialists: release engineer using only the README, attacker (hostile files and output), performance engineer, Windows/CI maintainer, statistician auditing claims, competitor engineer, docs lead. Two passes: test and fix, then try to break the fixes.
+
+Fixed (found by hands-on testing):
+- A CSV cell over 128 KiB or a malformed CSV crashed with a traceback and exit 1, which a CI reads as "regression". Now exit 2. A catch-all also turns any unexpected exception, `MemoryError` or deep nesting into exit 2 with a message, and a closed pipe (`| head`) no longer prints a traceback.
+- `/dev/zero`, a huge file or endless standard input was read without limit (out of memory, exit 1). All readers now stop at 256 MiB; NUL bytes are refused; `.eval` archive members are capped by what is actually read, not by the size the header claims.
+- `sequential` built a boundary table for the whole `--max-trials` before reading anything (tens of seconds, measured on a loaded machine, at the 100,000 maximum). The table is now computed one trial at a time; the results are identical (checked against the table version on 150 random streams) and a run that stops at trial 75 takes milliseconds.
+- `--method exact` on hundreds of failing rounds ignored its own 2 s hint budget inside one hint (5.7 to 14 s wall time, depending on machine load, for 200 rounds of 100,000 trials; now about 1.4 s of CPU). `trials_needed(..., deadline=)` is new.
+- `cases` parsed 200,000 rows before refusing them; it now counts first.
+- `safe_text` now also escapes non-ASCII spaces (NBSP, em space), variation selectors, private-use and unassigned code points.
+- Error messages cap how much of a bad value they echo; `items` on a rounds file explains it is the wrong file; a CSV that is not a rounds file points to `--per-trial`.
+- README sequential example output did not reproduce; replaced by a verified one.
+- `action.yml` showed nothing in the job summary when the input was bad (exit 2); it now shows the reason (backticks neutralised).
+
+Added:
+- `gate` takes several files and `-` for standard input everywhere; `gate --per-trial` turns each raw results file into one round (with a warning when items repeat); CSV separators `,` `;` tab `|` and extension-less files are detected; `--inconclusive-exit CODE` on `compare`, `paired`, `regress`.
+- `plan-regress` / `plan_noninferiority` / `regress_power` / `min_provable_margin`: exact-power sample sizing for `regress` and its inverse (what margin N trials can prove). Benchmark section 6 checks it against simulation.
+- `bound`: Wilson and exact bounds for plain counts ("30/30 still allows an 11.6% failure rate").
+- `passgate_version` in all JSON output.
+- 38 new tests (203 -> 241): hostile files, stdin, per-trial rounds, lazy boundary equivalence, regress power vs simulation.
+
+Not built (kept for later): SARIF output, per-cell stochasticity audit (evalpower), bootstrap intervals and plots (errorbars), paired-design planning for `regress`, judge-noise modelling, running the GitHub Action on real runners, Windows path testing.
+
+### Round 2
+
 Expert round 2 (statistician, LLM-eval practitioner, CI/DevEx lead, data engineer, skeptical ML engineer, plain-language explainer).
 
 ### Added

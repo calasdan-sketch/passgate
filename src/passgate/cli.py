@@ -14,6 +14,7 @@ from . import __version__
 from .cluster import evaluate_items
 from .gate import Round, compare, compare_paired, evaluate_rounds
 from .ingest import (
+    _STDIN_CACHE,
     FORMATS,
     csv_records,
     kind_of,
@@ -81,6 +82,8 @@ def load_rounds(path: str) -> List[Round]:
     """
     text = read_text(path)
     rounds: List[Round] = []
+    if not text.strip():
+        raise InputError(f"{'standard input' if path == '-' else safe_text(path)} is empty")
     if kind_of(path, text) == "csv":
         for i, row in enumerate(csv_records(text, safe_text(path)), start=1):
             trials = row.get("trials") if row.get("trials") not in (None, "") else row.get("n")
@@ -231,11 +234,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="what decides the verdict: z (default) or fisher (one-sided exact; best for small rounds)",
     )
     _add_output(c)
+    _add_inconclusive(c)
 
     pr = sub.add_parser("paired", help="candidate vs baseline on the SAME items (exact McNemar)")
     pr.add_argument("results", help="CSV/JSON/JSONL with per-item candidate and baseline pass/fail")
     pr.add_argument("--alpha", type=float, default=0.05)
     _add_output(pr)
+    _add_inconclusive(pr)
 
     pr.add_argument("--from", dest="src", choices=FORMATS, default="auto", help="input format for promptfoo / Inspect files")
     pr.add_argument("--candidate-arm", help="arm (prompt/provider) to treat as the candidate in a multi-arm file")
@@ -255,6 +260,7 @@ def _build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--baseline-file")
     rg.add_argument("--scorer")
     _add_output(rg)
+    _add_inconclusive(rg)
 
     sq = sub.add_parser("sequential", help="stop early: certify a pass rate while peeking after every trial")
     sq.add_argument("outcomes", help="file of outcomes in run order: 1/0, true/false or pass/fail, one per line (or a JSON list)")
@@ -318,6 +324,31 @@ def _build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _exit_for(args: argparse.Namespace, passed: bool, verdict: str) -> int:
+    """0 pass, 1 fail; an 'inconclusive' verdict may use its own code (--inconclusive-exit) so CI can tell it apart."""
+    if passed:
+        return 0
+    code = getattr(args, "inconclusive_exit", 1)
+    return code if verdict == "inconclusive" else 1
+
+
+def _exit_code(text: str) -> int:
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number") from None
+    if n != 1 and not 3 <= n <= 125:
+        raise argparse.ArgumentTypeError("must be 1 or between 3 and 125 (0 would let unproven changes pass; 2 means bad input)")
+    return n
+
+
+def _add_inconclusive(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--inconclusive-exit", type=_exit_code, default=1, metavar="CODE",
+        help="exit code for an 'inconclusive' verdict (default 1, same as a failure); use e.g. 3 to treat it as 'needs more data' in CI",
+    )
+
+
 def _add_output(p: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true", help="machine-readable output (same as --format json)")
     p.add_argument("--format", choices=("text", "json", "markdown", "junit"), default=None, help="output format")
@@ -330,17 +361,24 @@ def _add_output(p: argparse.ArgumentParser) -> None:
 
 def _gate_rounds(args: argparse.Namespace) -> List[Round]:
     files = args.rounds
+    if files.count("-") > 1:
+        raise InputError("standard input ('-') can be used only once")
     if not args.per_trial:
         if args.src != "auto" or args.arm or args.scorer:
             raise InputError("--from, --arm and --scorer only apply with --per-trial")
         return [r for f in files for r in load_rounds(f)]
-    if files.count("-") > 1:
-        raise InputError("standard input ('-') can be used only once")
     rounds: List[Round] = []
     for f in files:
         chosen = pick_arm(load_arms(f, args.src, args.scorer), args.arm)
         trials = sum(v[0] for v in chosen.values())
         passes = sum(v[1] for v in chosen.values())
+        repeated = sum(1 for v in chosen.values() if v[0] > 1)
+        if repeated:
+            print(
+                f"passgate: warning: {safe_text(f)}: {repeated} item(s) were tried more than once. gate treats every "
+                "trial as independent, so its bound is too optimistic here; use 'passgate items' for a cluster-aware bound.",
+                file=sys.stderr,
+            )
         label = "stdin" if f == "-" else os.path.basename(f)
         rounds.append(_make_round(trials, passes, label, safe_text(f)))
     return rounds
@@ -453,8 +491,8 @@ def _plan_regress(args: argparse.Namespace) -> int:
     if (args.margin is None) == (args.trials is None):
         raise InputError("give exactly one of --margin (find the trials) or --trials (find the margin)")
     if args.trials is not None:
-        if not 1 <= args.trials <= 1_000_000:
-            raise InputError("--trials must be between 1 and 1,000,000")
+        if not 1 <= args.trials <= 200_000:
+            raise InputError("--trials must be between 1 and 200,000")
         m = min_provable_margin(args.trials, args.baseline_rate, args.power, args.alpha, cand)
         if args.json:
             _emit(json.dumps({"passgate_version": __version__, "trials_per_arm": args.trials, "min_margin": m, "power": args.power}, indent=2))
@@ -471,10 +509,11 @@ def _plan_regress(args: argparse.Namespace) -> int:
     if args.json:
         _emit(json.dumps({"passgate_version": __version__, "achievable": res is not None, **(res or {})}, indent=2))
     elif res is None:
-        _emit(
-            f"plan-regress: a candidate at {cand:.3f} versus a baseline at {args.baseline_rate:.3f} is already "
-            f"{args.margin:g} or more worse, or needs over 20,000 trials per arm; no sample size proves it is not worse"
-        )
+        if cand - args.baseline_rate <= -args.margin:
+            why = f"is already {args.margin:g} or more worse, so no sample size can prove it is not worse"
+        else:
+            why = "would need over 20,000 trials per arm (the search limit)"
+        _emit(f"plan-regress: a candidate at {cand:.3f} versus a baseline at {args.baseline_rate:.3f} {why}")
     else:
         n = res["trials_per_arm"]
         _emit(
@@ -557,6 +596,8 @@ def load_cases(path: str) -> List[Case]:
 def _paired_data(args: argparse.Namespace) -> List[Tuple[bool, bool]]:
     path = args.paired if args.cmd == "regress" else args.results
     if args.baseline_file or args.candidate_arm or args.baseline_arm or args.src != "auto":
+        if args.baseline_file == "-" and path == "-":
+            raise InputError("standard input ('-') can be used only once")
         arms_c = load_arms(path, args.src, args.scorer)
         if args.baseline_file:
             cand = pick_arm(arms_c, args.candidate_arm)
@@ -590,6 +631,7 @@ def _emit(text: str) -> None:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
+    _STDIN_CACHE.clear()  # standard input is read once per invocation, never reused across calls
     try:
         if args.cmd == "gate":
             rounds = _gate_rounds(args)
@@ -632,17 +674,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                     raise InputError("give --candidate and --baseline (PASSES/TRIALS), or --paired FILE")
                 ni = non_inferiority([parse_ratio(x) for x in args.candidate], [parse_ratio(x) for x in args.baseline], args.margin, args.alpha)
             _render(args, ni)
-            return 0 if ni.passed else 1
+            return _exit_for(args, ni.passed, ni.verdict)
         if args.cmd == "paired":
             pc = compare_paired(_paired_data(args), alpha=args.alpha)
             _render(args, pc)
-            return 0 if pc.verdict == "candidate-better" else 1
+            return _exit_for(args, pc.verdict == "candidate-better", pc.verdict)
 
         cand = [parse_ratio(x) for x in args.candidate]
         base = [parse_ratio(x) for x in args.baseline]
         cmp_ = compare(cand, base, alpha=args.alpha, test=args.test)
         _render(args, cmp_)
-        return 0 if cmp_.verdict == "candidate-better" else 1
+        return _exit_for(args, cmp_.verdict == "candidate-better", cmp_.verdict)
     except (ValueError, OverflowError) as e:  # includes InputError and library validation errors
         print(f"passgate: {safe_text(e, 400)}", file=sys.stderr)
         return 2

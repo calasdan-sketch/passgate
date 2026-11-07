@@ -357,3 +357,44 @@ def test_plan_regress_trials_mode(capsys):
     assert rc == 0 and 0.04 < json.loads(out)["min_margin"] < 0.08
     rc, _, err = run(["plan-regress", "--baseline-rate", "0.9"], capsys)
     assert rc == 2 and "exactly one" in err
+
+
+def test_per_trial_warns_when_items_repeat(tmp_path, capsys):
+    f = tmp_path / "rep.csv"
+    f.write_text("item,pass\n" + "".join(f"q{i % 5},1\n" for i in range(100)))
+    rc, _, err = run(["gate", str(f), "--per-trial", "--threshold", "0.9"], capsys)
+    assert rc == 0 and "tried more than once" in err and "passgate items" in err
+
+
+def test_paired_cannot_read_stdin_twice(monkeypatch, capsys):
+    feed_stdin(monkeypatch, "item,candidate,baseline\na,1,0\n")
+    rc, _, err = run(["paired", "-", "--baseline-file", "-"], capsys)
+    assert rc == 2 and "only once" in err
+
+
+def test_empty_stdin_message(monkeypatch, capsys):
+    feed_stdin(monkeypatch, "")
+    rc, _, err = run(["gate", "-"], capsys)
+    assert rc == 2 and "empty" in err
+
+
+def test_stdin_not_reused_between_calls(monkeypatch, capsys):
+    feed_stdin(monkeypatch, "[[99, 100]]")
+    assert run(["gate", "-", "--threshold", "0.9"], capsys)[0] == 0
+    feed_stdin(monkeypatch, "[[50, 100]]")  # a second call in the same process must see the new input
+    assert run(["gate", "-", "--threshold", "0.9"], capsys)[0] == 1
+
+
+def test_inconclusive_exit_code(capsys):
+    base = ["regress", "--margin", "0.03", "--candidate", "188/200", "--baseline", "190/200"]
+    assert run(base, capsys)[0] == 1
+    assert run(base + ["--inconclusive-exit", "3"], capsys)[0] == 3
+    # a real failure keeps exit 1, a real pass keeps exit 0, whatever the flag says
+    assert run(["regress", "--margin", "0.03", "--candidate", "100/200", "--baseline", "190/200", "--inconclusive-exit", "3"], capsys)[0] == 1
+    assert run(["regress", "--margin", "0.05", "--candidate", "950/1000", "--baseline", "950/1000", "--inconclusive-exit", "3"], capsys)[0] == 0
+    for bad in ("0", "2", "126", "x"):
+        with pytest.raises(SystemExit) as e:
+            cli.main(base + ["--inconclusive-exit", bad])
+        assert e.value.code == 2
+    capsys.readouterr()
+    assert run(["compare", "--candidate", "9/10", "--baseline", "9/10", "--inconclusive-exit", "4"], capsys)[0] == 4

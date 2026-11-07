@@ -108,13 +108,13 @@ def csv_records(text: str, where: str = "file") -> List[Dict[str, Any]]:
 
     Raises IngestError (never a bare csv.Error) on oversized cells or ragged rows.
     """
-    csv.field_size_limit(MAX_CSV_FIELD)
     lines = text.splitlines()
     first = lines[0] if lines else ""
     delim = max((",", ";", "\t", "|"), key=first.count)
     if first.count(delim) == 0:
         delim = ","
     out: List[Dict[str, Any]] = []
+    old_limit = csv.field_size_limit(MAX_CSV_FIELD)
     try:
         for row in csv.DictReader(io.StringIO(text, newline=""), delimiter=delim, strict=True):
             if None in row:  # more cells than header columns
@@ -122,6 +122,8 @@ def csv_records(text: str, where: str = "file") -> List[Dict[str, Any]]:
             out.append({(k or "").strip().lower(): v for k, v in row.items()})
     except csv.Error as e:
         raise IngestError(f"{where}: not valid CSV ({safe_text(e)})") from None
+    finally:
+        csv.field_size_limit(old_limit)  # do not leave a process-wide setting behind
     return out
 
 

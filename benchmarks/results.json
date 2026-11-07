@@ -369,7 +369,37 @@
   ],
   "threshold": 0.9
  },
- "numpy": "2.5.4",
+ "numpy": "2.5.3",
+ "plan_regress": {
+  "baseline": 0.9,
+  "reps": 6000,
+  "rows": [
+   {
+    "exact_false_pass_at_margin": 0.05007976770729172,
+    "exact_power": 0.8000182790776927,
+    "margin": 0.03,
+    "simulated_false_pass_at_margin": 0.05216666666666667,
+    "simulated_power_equal": 0.7845,
+    "trials_per_arm": 1239
+   },
+   {
+    "exact_false_pass_at_margin": 0.050588763516484773,
+    "exact_power": 0.8022312038258058,
+    "margin": 0.05,
+    "simulated_false_pass_at_margin": 0.0525,
+    "simulated_power_equal": 0.8046666666666666,
+    "trials_per_arm": 451
+   },
+   {
+    "exact_false_pass_at_margin": 0.05070634200871051,
+    "exact_power": 0.8024239286609515,
+    "margin": 0.08,
+    "simulated_false_pass_at_margin": 0.053,
+    "simulated_power_equal": 0.7966666666666666,
+    "trials_per_arm": 178
+   }
+  ]
+ },
  "python": "3.13.18",
  "regress": {
   "coverage_nominal_0.90": [

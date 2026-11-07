@@ -39,8 +39,10 @@ Exit code `1` fails CI. Every failing round says what would fix it. **93/100 doe
 
 | command | answers | exit 0 when |
 |---|---|---|
-| `gate FILE` | Does every round clear the bar? | all rounds clear and there are at least `--min-rounds` |
+| `gate FILE...` | Does every round clear the bar? | all rounds clear and there are at least `--min-rounds` |
 | `plan --rate R [--power P]` | How many trials per round do I need? | the target is achievable |
+| `plan-regress --margin M --baseline-rate R` | How many trials per arm so `regress` can prove "not worse"? (or `--trials N`: what margin can N trials prove?) | the target is achievable |
+| `bound 30/30 ...` | What does this result actually prove? | always |
 | `oc --trials N` | How likely is a good (or bad) candidate to pass? | always |
 | `compare --candidate K/N --baseline K/N` | Is the candidate *better*? (independent samples) | candidate is significantly better |
 | `paired FILE` | Is the candidate better on the **same items**? | candidate is significantly better |
@@ -50,7 +52,7 @@ Exit code `1` fails CI. Every failing round says what would fix it. **93/100 doe
 | `cases FILE` | Which of many cases regressed? (multiple-testing control) | no supported regression |
 | `arms FILE` | Which prompts / providers does this promptfoo or Inspect file hold? | always |
 
-All commands exit `2` on bad input (missing file, bad JSON/CSV, invalid number, duplicate item, empty file). A typo is never mistaken for a model regression, and an empty input never passes. Commands that judge a result (`gate`, `compare`, `paired`, `regress`, `sequential`, `items`, `cases`) accept `--format text|json|markdown|junit`, `--explain` (a plain-English paragraph for people who do not read confidence intervals) and `--github-summary`.
+All commands exit `2` on bad input (missing file, bad JSON/CSV, invalid number, duplicate item, empty file, a file over 256 MiB, NUL bytes) and on any unexpected internal error, so a typo or a crash is never mistaken for a model regression, and an empty input never passes. Every file argument also accepts `-` for standard input (`cat rounds.json | passgate gate -`), and CSV may use `,`, `;`, tab or `|` as the separator. Commands that judge a result (`gate`, `compare`, `paired`, `regress`, `sequential`, `items`, `cases`) accept `--format text|json|markdown|junit`, `--explain` (a plain-English paragraph for people who do not read confidence intervals) and `--github-summary`. JSON output carries `passgate_version`. `compare`, `paired` and `regress` also take `--inconclusive-exit CODE` (1, or 3 to 125) so CI can tell "needs more data" from "worse".
 
 ### gate
 
@@ -61,6 +63,7 @@ passgate gate rounds.json --threshold 0.9 --min-rounds 3 [--method exact] [--con
 - Input: a JSON list of `{trials, passes, label?}` objects, or `[passes, trials]` pairs, or a CSV with `trials,passes[,label]` columns (`n,k` also accepted). UTF-8 with or without BOM, LF or CRLF.
 - `--method wilson` (default) uses the Wilson score bound. `--method exact` uses the Clopper-Pearson bound, which never undercovers: its one-sided coverage is at least nominal for every true rate (the test suite checks this). Wilson can dip slightly below nominal for some rates.
 - `--json` (or `--format json`) gives machine-readable output, including `trials_needed` for each failing round.
+- Several files are joined into one list of rounds. With `--per-trial`, each file is a *raw results file* (promptfoo, Inspect, or CSV/JSONL with one outcome per row) and becomes ONE round, so three eval runs need no glue script: `passgate gate run1.json run2.json run3.json --per-trial --min-rounds 3`. Pick a prompt or provider with `--arm`. If items inside a file were tried more than once, `gate` warns on stderr that its bound is too optimistic and points to `items`.
 
 ### plan: size your eval before you burn tokens
 
@@ -128,7 +131,17 @@ passgate regress --margin 0.03 --candidate 188/200 --baseline 190/200 --explain
 passgate regress --margin 0.03 --paired results.csv        # both arms ran the same items
 ```
 
-Verdicts: `superior`, `non-inferior` (exit 0), `inconclusive`, `inferior` (exit 1). Inconclusive means the data cannot rule out a drop bigger than the margin; it never passes. Note that proving "no worse than 5 points" at 90% power takes a few hundred trials per arm.
+Verdicts: `superior`, `non-inferior` (exit 0), `inconclusive`, `inferior` (exit 1). Inconclusive means the data cannot rule out a drop bigger than the margin; it never passes (`--inconclusive-exit 3` gives it its own exit code).
+
+How many trials is enough? Ask before you run:
+
+```bash
+passgate plan-regress --margin 0.05 --baseline-rate 0.9              # trials per arm
+passgate plan-regress --baseline-rate 0.9 --trials 300               # or: what margin can 300 trials per arm prove?
+# plan-regress: run 451 trials per arm (902 in total). A candidate whose true rate is 0.900 against a baseline at 0.900 is then declared not worse than 0.05 80.2% of the time (one-sided alpha 0.05).
+```
+
+The power is exact binomial arithmetic over every outcome (checked against simulation in the benchmark, section 6). The size comes from a geometric search plus bisection, so a slightly smaller one may also reach the target. It assumes independent samples (different items per arm) and searches up to 20,000 trials per arm. At a true drop of exactly the margin, `regress` passes about 5.1% of the time, a hair over the nominal 5%, because the Newcombe interval is an approximation.
 
 ### sequential: stop the moment the evidence is conclusive
 
@@ -136,7 +149,8 @@ Checking a Wilson bound after every trial and stopping when it clears is a commo
 
 ```bash
 passgate sequential outcomes.txt --threshold 0.9 --max-trials 1000    # one 1/0 per line
-# sequential: PASS after 66 trial(s) (65 passes), any-time lower bound 0.901 vs bar 0.900
+# for 80 lines with a single 0 near the start:
+# sequential: PASS after 75 trial(s) (74 passes), any-time lower bound 0.901 vs bar 0.900 - evidence crossed the any-time bound
 ```
 
 It also stops with `fail` as soon as certification is impossible within `--max-trials`. A stream that ends early is `undecided` and never passes. The default `--alpha 0.025` matches the one-sided level of a 95% gate. `pass_boundary()` returns the pass-count table if you want to build the stopping rule into your own runner. The price: at a horizon of 500 trials a candidate at 0.95 is certified 91.5% of the time versus 98.8% for a single fixed look, in exchange for needing about half as many trials on average.
@@ -224,7 +238,7 @@ Each statement about another tool comes from the public page it links to, or fro
 | Python | 3.9+ | 3.10+ | 3.11+ | 3.10+ | 3.10+ | n/a | n/a |
 | Pass/fail threshold gate with CI exit codes | yes (0 / 1 / 2) | not stated on its page | no (always exits 0, by design) | yes (non-zero when a case is broken) | no | no gate found | pass-rate threshold only (`PROMPTFOO_PASS_RATE_THRESHOLD`); no confidence bound found |
 | Per-round lower bound | Wilson or Clopper-Pearson | - | Clopper-Pearson | Wilson | normal-approx. Bayesian | Wilson CI metric available | - |
-| Sample-size planning | `plan`, with power target and operating curve | power analysis (min. detectable effect) | runs needed | - | - | - | - |
+| Sample-size planning | `plan` (power target, operating curve), `plan-regress` (trials, or the margin N trials can prove) | power analysis (min. detectable effect) | runs needed | - | - | - | - |
 | Paired test on shared items | exact McNemar | exact McNemar | - | - | - | - | - |
 | Non-inferiority ("not worse by more than M") | yes (`regress`) | not found | not found | not found | not found | not found | not found |
 | Early stopping with Type I control | yes (`sequential`) | not found | not found | not found | sequential-inference helpers (`sinf`) | not found | not found |
@@ -236,11 +250,11 @@ Each statement about another tool comes from the public page it links to, or fro
 | Plain-English verdict | `--explain` | - | - | - | - | - | - |
 | Runs your prompts for you | no | no | no | yes | no | yes | yes |
 
-What others do better: errorbars has richer clustered/multi-model leaderboards and plots. evalpower and scorio estimate pass^k from run counts without needing item-level files. Inspect AI and promptfoo run the evals themselves and have large ecosystems. flakelens runs your test cases itself. If you need those, use them; passgate is the small, strict, dependency-free gate you put at the end of the pipeline, and it reads their output.
+What others do better: errorbars has richer clustered/multi-model leaderboards, bootstrap intervals and SVG plots. evalpower and scorio estimate pass^k from run counts without needing item-level files, and evalpower audits each model-task cell for whether it is demonstrably stochastic (passgate has no such per-cell audit; `bound` only states what a count proves). Both were re-read on 2026-11-07 at the same versions as in the table (PyPI index and package source, not executed). Inspect AI and promptfoo run the evals themselves and have large ecosystems. flakelens runs your test cases itself. If you need those, use them; passgate is the small, strict, dependency-free gate you put at the end of the pipeline, and it reads their output.
 
 ### Measured: how often does each gate make the wrong call?
 
-Committed Monte Carlo benchmark with fixed seeds: [`benchmarks/bench_gates.py`](benchmarks/bench_gates.py), full tables in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md). Re-run it with `pip install -e ".[dev]" && python benchmarks/bench_gates.py` (about a minute). Headlines (bar 0.9 unless noted):
+Committed Monte Carlo benchmark with fixed seeds: [`benchmarks/bench_gates.py`](benchmarks/bench_gates.py), full tables in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md). Re-run it with `pip install -e ".[dev]" && python benchmarks/bench_gates.py` (one to two minutes). Headlines (bar 0.9 unless noted):
 
 | situation | naive rule | passgate |
 |---|---|---|
@@ -250,6 +264,7 @@ Committed Monte Carlo benchmark with fixed seeds: [`benchmarks/bench_gates.py`](
 | 30 items x 10 tries, ICC 0.3, true rate 0.80, bar 0.80: false pass | 16.4% (plain pooled Wilson) | 3.1% (`items`) |
 | candidate equal to baseline, 200 trials each: passes the CI check | 5.4% (`compare` demands "better") | 50.2% (`regress`, margin 0.05); a true 0.05 drop passes 4.9% |
 | 50 cases, nothing changed: any false alarm | 34.0% (raw p < 0.05) | 0.1% (Holm) |
+| `plan-regress` size (451/arm, margin 0.05): equal prompts pass | n/a | 80.5% simulated vs 80.2% exact |
 
 The honest cost: passgate is strict. With few trials it blocks good candidates (0% pass at 30 trials per round, 8.5% at 100), and the sequential test certifies a 0.95 candidate within 500 trials 91.5% of the time versus 98.8% for one fixed look. Cluster-aware bounds are still slightly liberal with only 10 items (4.5% false pass at the boundary in the table). Use `plan --power` to size the eval.
 
@@ -257,7 +272,9 @@ The honest cost: passgate is strict. With few trials it blocks good candidates (
 
 - The Wilson and Clopper-Pearson intervals are two-sided, so a 95% interval gives a one-sided 97.5% lower bound per round. Requiring every round to clear is an intersection-union test, which needs no multiple-testing correction for the claim "every round is above the bar". Searching many *cases* for a regression is a different question; use `cases` for that.
 - `gate` treats trials in a round as independent. If rounds reuse the same test items, or items are tried several times, the real uncertainty is larger than the bound shows. Use `items` for repeated trials; see [Miller 2024, "Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640). The `items` bound uses an estimated design effect, so it is itself approximate with few items (under about 20) and the pass^k interval is a t-interval over per-item estimates, not exact.
-- `sequential` and `regress` need real sample sizes. Tiny streams never certify, and equal prompts pass `regress` only about half the time at 200 trials per arm and a 5-point margin; `regress` has no power planner yet.
+- `sequential` and `regress` need real sample sizes. Tiny streams never certify, and equal prompts pass `regress` only about half the time at 200 trials per arm and a 5-point margin. `plan-regress` sizes the independent-samples design only (not the paired one) and stops at 20,000 trials per arm.
+- Files are read whole: the cap is 256 MiB, a CSV cell may be 1 MiB, and about a million rows take around ten seconds to parse. Parsing speed was measured on one shared machine, not benchmarked.
+- Windows: CRLF, BOM and `;`-separated CSV are tested; Windows-style path handling (labels from `--per-trial` file names use the OS's own basename rule) was not run on Windows.
 - The `sequential` any-time guarantee is for a fixed bar and a stream of independent trials. It does not cover changing the bar after seeing data, and its bound (`anytime_lower`) is wider than a fixed-size Wilson bound by design.
 - The promptfoo and Inspect readers follow public docs and the published log schema; they are tested on synthetic files in that shape, not on every version of those tools. Unrecognised data fails closed. JUnit and the GitHub Action cover the common cases; there is no SARIF output.
 - `compare` pools all rounds and does not model variance from one round to the next. Use `paired` when both arms share items.
