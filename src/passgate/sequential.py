@@ -168,22 +168,58 @@ def run_sequential(
         raise ValueError("threshold must be between 0 and 1")
     if max_trials < 1 or max_trials > 100_000:
         raise ValueError("max_trials must be between 1 and 100000")
-    table = pass_boundary(threshold, alpha, max_trials)
-    floor = _futility_floor(table, max_trials)
+    if not 0.0 < alpha < 0.5:
+        raise ValueError("alpha must be in (0.0, 0.5)")
+    bound = _LazyBoundary(threshold, alpha)
+    # (k, n) can still certify iff k - n >= min over m > n of (need(m) - m). That minimum is reached at
+    # m = max_trials (the failures a boundary allows never shrink as n grows; checked against the full
+    # table in the tests), so only the last entry is needed and the table is built one trial at a time.
+    last = bound.need(max_trials)
+    far_floor = math.inf if last is None else last - max_trials
     k = n = 0
     for o in outcomes:
         if not isinstance(o, bool):
             raise ValueError("outcomes must be booleans")
         n += 1
         k += o
-        need = table[n]
+        need = bound.need(n)
         if need is not None and k >= need:
             return SequentialResult("pass", "evidence crossed the any-time bound", n, k, threshold, alpha, max_trials, anytime_lower(k, n, alpha))
-        if k - n < floor[n]:
+        if n < max_trials and k - n < far_floor:
             return SequentialResult("fail", "cannot be certified within the trial budget", n, k, threshold, alpha, max_trials, anytime_lower(k, n, alpha))
         if n >= max_trials:
             return SequentialResult("fail", "trial budget used up without certification", n, k, threshold, alpha, max_trials, anytime_lower(k, n, alpha))
     return SequentialResult("undecided", "outcome stream ended first", n, k, threshold, alpha, max_trials, anytime_lower(k, n, alpha))
+
+
+class _LazyBoundary:
+    """``need(n)`` = fewest passes in n trials that certify (same values as ``pass_boundary``), computed on demand.
+
+    Calls for consecutive n reuse the previous answer to narrow the search (the boundary drops by at most 1).
+    """
+
+    def __init__(self, theta: float, alpha: float) -> None:
+        self.theta = theta
+        self.target = math.log(1.0 / alpha)
+        self.cache: Dict[int, Optional[int]] = {}
+
+    def need(self, n: int) -> Optional[int]:
+        if n in self.cache:
+            return self.cache[n]
+        if log_evidence(n, n, self.theta) < self.target:
+            res = None
+        else:
+            before = self.cache.get(n - 1)
+            lo, hi = (max(0, before - 1) if before is not None else 0), n
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if log_evidence(mid, n, self.theta) >= self.target:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            res = lo
+        self.cache[n] = res
+        return res
 
 
 def _futility_floor(table: List[Optional[int]], max_trials: int) -> List[float]:

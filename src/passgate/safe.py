@@ -18,7 +18,13 @@ def safe_text(text: object, limit: int = 80) -> str:
     out = []
     for ch in str(text):
         cp = ord(ch)
-        if cp in _INVISIBLE or unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp"):
+        cat = unicodedata.category(ch)
+        if (
+            cp in _INVISIBLE
+            or cat in ("Cc", "Cf", "Cs", "Zl", "Zp", "Co", "Cn")
+            or (cat == "Zs" and ch != " ")  # NBSP, em space, ideographic space: look like a space
+            or 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF  # variation selectors: invisible
+        ):
             out.append(f"\\x{cp:02x}" if cp < 0x100 else f"\\u{cp:04x}" if cp < 0x10000 else f"\\U{cp:08x}")
         else:
             out.append(ch)

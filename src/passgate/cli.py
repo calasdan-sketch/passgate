@@ -5,7 +5,6 @@ Exit codes: 0 = pass, 1 = gate/comparison did not pass, 2 = bad input or usage.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
 import sys
@@ -14,10 +13,24 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import __version__
 from .cluster import evaluate_items
 from .gate import Round, compare, compare_paired, evaluate_rounds
-from .ingest import FORMATS, load_arms, load_items, pairs_from_arms, pick_arm
+from .ingest import (
+    FORMATS,
+    csv_records,
+    kind_of,
+    load_arms,
+    load_items,
+    pairs_from_arms,
+    pick_arm,
+    read_text,
+)
 from .junit import to_junit
-from .multi import ADJUSTMENTS, Case, compare_cases
-from .noninf import non_inferiority, non_inferiority_paired
+from .multi import ADJUSTMENTS, MAX_CASES, Case, compare_cases
+from .noninf import (
+    min_provable_margin,
+    non_inferiority,
+    non_inferiority_paired,
+    plan_noninferiority,
+)
 from .power import oc_curve, plan_power
 from .safe import safe_text
 from .sequential import run_sequential
@@ -47,7 +60,7 @@ def _to_int(value: Any, what: str, where: str) -> int:
             return int(value)
         return int(str(value).strip())
     except ValueError:
-        raise InputError(f"{where}: {what} must be a whole number, got {value!r}") from None
+        raise InputError(f"{where}: {what} must be a whole number, got {safe_text(repr(value), 40)}") from None
 
 
 def _make_round(trials: Any, passes: Any, label: str, where: str) -> Round:
@@ -62,36 +75,36 @@ def _make_round(trials: Any, passes: Any, label: str, where: str) -> Round:
 def load_rounds(path: str) -> List[Round]:
     """JSON list of {trials, passes} (or [passes, trials] pairs) or CSV (trials,passes[,label]).
 
-    Files may carry a UTF-8 BOM (common from Windows tools) and CRLF line endings.
+    ``-`` reads standard input. Files may carry a UTF-8 BOM and CRLF line endings; CSV may use
+    ``,``, ``;``, tab or ``|`` as the separator. The format comes from the extension, or from the
+    content when the name has no known extension.
     """
+    text = read_text(path)
     rounds: List[Round] = []
+    if kind_of(path, text) == "csv":
+        for i, row in enumerate(csv_records(text, safe_text(path)), start=1):
+            trials = row.get("trials") if row.get("trials") not in (None, "") else row.get("n")
+            passes = row.get("passes") if row.get("passes") not in (None, "") else row.get("k")
+            if trials is None and passes is None:
+                raise InputError(
+                    f"{safe_text(path)}: no 'trials' and 'passes' columns (found: "
+                    + ", ".join(safe_text(k, 20) for k in list(row)[:6]) + "). A per-trial results file? "
+                    "Give it to gate with --per-trial."
+                )
+            rounds.append(
+                _make_round(trials, passes, (row.get("label") or "").strip(), f"{safe_text(path)} row {i}")
+            )
+        return rounds
     try:
-        if path.lower().endswith(".csv"):
-            with open(path, newline="", encoding="utf-8-sig") as fh:
-                for i, row in enumerate(csv.DictReader(fh), start=1):
-                    row = {(k or "").strip().lower(): v for k, v in row.items()}
-                    trials = row.get("trials") if row.get("trials") not in (None, "") else row.get("n")
-                    passes = row.get("passes") if row.get("passes") not in (None, "") else row.get("k")
-                    rounds.append(
-                        _make_round(trials, passes, (row.get("label") or "").strip(), f"{path} row {i}")
-                    )
-            return rounds
-        with open(path, encoding="utf-8-sig") as fh:
-            data = json.load(fh)
-    except FileNotFoundError:
-        raise InputError(f"rounds file not found: {path}") from None
-    except OSError as e:
-        raise InputError(f"cannot read {path}: {e.strerror or e}") from None
-    except UnicodeDecodeError:
-        raise InputError(f"{path} is not valid UTF-8 text") from None
+        data = json.loads(text)
     except json.JSONDecodeError as e:
-        raise InputError(f"{path} is not valid JSON: {e}") from None
+        raise InputError(f"{safe_text(path)} is not valid JSON: {safe_text(e)}") from None
     except RecursionError:
-        raise InputError(f"{path}: JSON is nested too deeply") from None
+        raise InputError(f"{safe_text(path)}: JSON is nested too deeply") from None
     if not isinstance(data, list):
-        raise InputError(f"{path}: expected a JSON list of rounds")
+        raise InputError(f"{safe_text(path)}: expected a JSON list of rounds")
     for i, item in enumerate(data, start=1):
-        where = f"{path} round {i}"
+        where = f"{safe_text(path)} round {i}"
         if isinstance(item, dict):
             rounds.append(
                 _make_round(item.get("trials"), item.get("passes"), str(item.get("label", "")), where)
@@ -118,19 +131,11 @@ def _to_bool(value: Any, what: str, where: str) -> bool:
             return True
         if v in _FALSE:
             return False
-    raise InputError(f"{where}: {what} must be pass/fail (1/0, true/false), got {value!r}")
+    raise InputError(f"{where}: {what} must be pass/fail (1/0, true/false), got {safe_text(repr(value), 40)}")
 
 
 def _read_text(path: str) -> str:
-    try:
-        with open(path, encoding="utf-8-sig", newline="") as fh:
-            return fh.read()
-    except FileNotFoundError:
-        raise InputError(f"results file not found: {path}") from None
-    except OSError as e:
-        raise InputError(f"cannot read {path}: {e.strerror or e}") from None
-    except UnicodeDecodeError:
-        raise InputError(f"{path} is not valid UTF-8 text") from None
+    return read_text(path)
 
 
 def load_pairs(path: str) -> List[Tuple[bool, bool]]:
@@ -143,12 +148,11 @@ def load_pairs(path: str) -> List[Tuple[bool, bool]]:
     """
     text = _read_text(path)
     records: List[Tuple[str, Dict[str, Any]]] = []
-    low = path.lower()
-    if low.endswith(".csv"):
-        reader = csv.DictReader(text.splitlines())
-        for i, row in enumerate(reader, start=1):
-            records.append((f"{path} row {i}", {(k or "").strip().lower(): v for k, v in row.items()}))
-    elif low.endswith(".jsonl") or low.endswith(".ndjson"):
+    kind = kind_of(path, text)
+    if kind == "csv":
+        for i, row in enumerate(csv_records(text, safe_text(path)), start=1):
+            records.append((f"{safe_text(path)} row {i}", row))
+    elif kind == "jsonl":
         for i, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
                 continue
@@ -201,7 +205,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     g = sub.add_parser("gate", help="pass^N gate over eval rounds; exit 1 if any round is weak")
-    g.add_argument("rounds", help="JSON or CSV rounds file")
+    g.add_argument("rounds", nargs="+", metavar="FILE", help="JSON or CSV rounds file(s); '-' reads standard input")
+    g.add_argument(
+        "--per-trial", action="store_true",
+        help="each FILE is a raw results file (promptfoo, Inspect, CSV/JSONL with one outcome per row) and becomes ONE round",
+    )
+    g.add_argument("--from", dest="src", choices=FORMATS, default="auto", help="input format for --per-trial files")
+    g.add_argument("--arm", help="with --per-trial: which arm (prompt/provider) when a file holds several")
+    g.add_argument("--scorer", help="with --per-trial: Inspect scorer name when a log has several")
     g.add_argument("--threshold", type=float, default=0.9, help="required Wilson lower bound (default 0.9)")
     g.add_argument("--confidence", type=float, default=0.95, help="interval confidence (default 0.95)")
     g.add_argument("--min-rounds", type=int, default=1, help="fail if fewer rounds than this")
@@ -282,6 +293,20 @@ def _build_parser() -> argparse.ArgumentParser:
     oc.add_argument("--rounds", type=int, default=1, help="all of this many rounds must clear")
     oc.add_argument("--json", action="store_true")
 
+    bd = sub.add_parser("bound", help="what a result like 30/30 actually proves (plain bounds, no verdict)")
+    bd.add_argument("result", nargs="+", metavar="PASSES/TRIALS")
+    bd.add_argument("--confidence", type=float, default=0.95)
+    bd.add_argument("--json", action="store_true")
+
+    pr2 = sub.add_parser("plan-regress", help="how many trials per arm so that 'regress' can actually prove no regression")
+    pr2.add_argument("--margin", type=float, default=None, help="largest drop you accept, e.g. 0.03 (omit with --trials)")
+    pr2.add_argument("--trials", type=int, default=None, help="instead: trials per arm you can afford; prints the smallest margin you can prove")
+    pr2.add_argument("--baseline-rate", type=float, required=True, help="the baseline's true pass rate you expect, e.g. 0.9")
+    pr2.add_argument("--candidate-rate", type=float, default=None, help="the candidate's true pass rate (default: same as the baseline)")
+    pr2.add_argument("--power", type=float, default=0.8, help="chance a candidate at --candidate-rate passes (default 0.8)")
+    pr2.add_argument("--alpha", type=float, default=0.05, help="one-sided false-pass rate (default 0.05)")
+    pr2.add_argument("--json", action="store_true")
+
     pl = sub.add_parser("plan", help="how many trials per round to certify a threshold at an expected rate")
     pl.add_argument("--rate", type=float, required=True, help="pass rate you expect per round, e.g. 0.95")
     pl.add_argument("--threshold", type=float, default=0.9)
@@ -303,11 +328,29 @@ def _add_output(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _gate_rounds(args: argparse.Namespace) -> List[Round]:
+    files = args.rounds
+    if not args.per_trial:
+        if args.src != "auto" or args.arm or args.scorer:
+            raise InputError("--from, --arm and --scorer only apply with --per-trial")
+        return [r for f in files for r in load_rounds(f)]
+    if files.count("-") > 1:
+        raise InputError("standard input ('-') can be used only once")
+    rounds: List[Round] = []
+    for f in files:
+        chosen = pick_arm(load_arms(f, args.src, args.scorer), args.arm)
+        trials = sum(v[0] for v in chosen.values())
+        passes = sum(v[1] for v in chosen.values())
+        label = "stdin" if f == "-" else os.path.basename(f)
+        rounds.append(_make_round(trials, passes, label, safe_text(f)))
+    return rounds
+
+
 def _render(args: argparse.Namespace, obj: Any) -> None:
     fmt = "json" if args.json else (args.format or "text")
     explain = getattr(args, "explain", False) and hasattr(obj, "explain")
     if fmt == "json":
-        d = obj.as_dict()
+        d = {"passgate_version": __version__, **obj.as_dict()}
         if explain:
             d["explanation"] = obj.explain()
         _emit(json.dumps(d, indent=2))
@@ -338,7 +381,7 @@ def _plan(args: argparse.Namespace) -> int:
     res = trials_needed(args.rate, args.threshold, args.confidence, args.method)
     if args.json:
         _emit(json.dumps({
-            "rate": args.rate, "threshold": args.threshold, "confidence": args.confidence,
+            "passgate_version": __version__, "rate": args.rate, "threshold": args.threshold, "confidence": args.confidence,
             "method": args.method, "rounds": args.rounds, "achievable": res is not None,
             "trials_per_round": res[0] if res else None, "min_passes_per_round": res[1] if res else None,
             "total_trials": res[0] * args.rounds if res else None,
@@ -362,7 +405,7 @@ def _plan(args: argparse.Namespace) -> int:
 def _plan_power(args: argparse.Namespace) -> int:
     res = plan_power(args.rate, args.threshold, args.power, args.confidence, args.method, args.rounds)
     if args.json:
-        _emit(json.dumps({"rate": args.rate, "threshold": args.threshold, "power": args.power,
+        _emit(json.dumps({"passgate_version": __version__, "rate": args.rate, "threshold": args.threshold, "power": args.power,
                           "achievable": res is not None, **(res or {})}, indent=2))
     elif res is None:
         _emit(
@@ -381,10 +424,72 @@ def _plan_power(args: argparse.Namespace) -> int:
     return 0 if res is not None else 1
 
 
+def _bound(args: argparse.Namespace) -> int:
+    from .stats import clopper_pearson_interval, wilson_interval
+
+    rows = []
+    for text in args.result:
+        r = parse_ratio(text)
+        if r.trials > 100_000_000:
+            raise InputError("bound handles up to 100,000,000 trials")
+        w = wilson_interval(r.passes, r.trials, args.confidence)
+        c = clopper_pearson_interval(r.passes, r.trials, args.confidence)
+        rows.append({"passes": r.passes, "trials": r.trials, "rate": r.passes / r.trials,
+                     "wilson_lower": w[0], "wilson_upper": w[1], "exact_lower": c[0], "exact_upper": c[1]})
+    if args.json:
+        _emit(json.dumps({"passgate_version": __version__, "confidence": args.confidence, "results": rows}, indent=2))
+    else:
+        for x in rows:
+            _emit(
+                f"{x['passes']}/{x['trials']} = {x['rate']:.3f}: the true pass rate is between {x['exact_lower']:.3f} and "
+                f"{x['exact_upper']:.3f} ({args.confidence:.0%}, exact); Wilson says {x['wilson_lower']:.3f} to {x['wilson_upper']:.3f}. "
+                f"The failure rate could still be as high as {1 - x['exact_lower']:.1%}."
+            )
+    return 0
+
+
+def _plan_regress(args: argparse.Namespace) -> int:
+    cand = args.baseline_rate if args.candidate_rate is None else args.candidate_rate
+    if (args.margin is None) == (args.trials is None):
+        raise InputError("give exactly one of --margin (find the trials) or --trials (find the margin)")
+    if args.trials is not None:
+        if not 1 <= args.trials <= 1_000_000:
+            raise InputError("--trials must be between 1 and 1,000,000")
+        m = min_provable_margin(args.trials, args.baseline_rate, args.power, args.alpha, cand)
+        if args.json:
+            _emit(json.dumps({"passgate_version": __version__, "trials_per_arm": args.trials, "min_margin": m, "power": args.power}, indent=2))
+        elif m is None:
+            _emit(f"plan-regress: with {args.trials} trials per arm even a 50-point margin cannot be proved with {args.power:.0%} power")
+        else:
+            _emit(
+                f"plan-regress: with {args.trials} trials per arm, 'regress' can prove the candidate is not worse "
+                f"than about {m * 100:.1f} points ({args.power:.0%} chance if the true rates are {cand:.3f} and "
+                f"{args.baseline_rate:.3f}; one-sided alpha {args.alpha:g}). A smaller margin needs more trials."
+            )
+        return 0 if m is not None else 1
+    res = plan_noninferiority(cand, args.baseline_rate, args.margin, args.power, args.alpha)
+    if args.json:
+        _emit(json.dumps({"passgate_version": __version__, "achievable": res is not None, **(res or {})}, indent=2))
+    elif res is None:
+        _emit(
+            f"plan-regress: a candidate at {cand:.3f} versus a baseline at {args.baseline_rate:.3f} is already "
+            f"{args.margin:g} or more worse, or needs over 20,000 trials per arm; no sample size proves it is not worse"
+        )
+    else:
+        n = res["trials_per_arm"]
+        _emit(
+            f"plan-regress: run {n} trials per arm ({res['total_trials']} in total). A candidate whose true rate is "
+            f"{cand:.3f} against a baseline at {args.baseline_rate:.3f} is then declared not worse than {args.margin:g} "
+            f"{res['power_at_trials']:.1%} of the time (one-sided alpha {args.alpha:g}).\n"
+            "      Assumes independent samples (different items per arm); a paired run on the same items can need fewer, but is not planned here."
+        )
+    return 0 if res is not None else 1
+
+
 def _oc(args: argparse.Namespace) -> int:
     curve = oc_curve(args.trials, args.threshold, None, args.confidence, args.method, args.rounds)
     if args.json:
-        _emit(json.dumps({"trials": args.trials, "threshold": args.threshold, "rounds": args.rounds, "curve": curve}, indent=2))
+        _emit(json.dumps({"passgate_version": __version__, "trials": args.trials, "threshold": args.threshold, "rounds": args.rounds, "curve": curve}, indent=2))
     else:
         _emit(f"oc: P(gate passes) with {args.trials} trials x {args.rounds} round(s), bar {args.threshold:.3f}")
         for pt in curve:
@@ -410,7 +515,12 @@ def _load_stream(path: str) -> List[bool]:
         raise InputError("too many outcomes")
     if not toks:
         raise InputError(f"{safe_text(path)}: no outcomes found")
-    return [_to_bool(t, "outcome", f"{safe_text(path)} #{i}") for i, t in enumerate(toks, start=1)]
+    fast = {"1": True, "0": False, "true": True, "false": False, "pass": True, "fail": False}
+    out: List[bool] = []
+    for i, t in enumerate(toks, start=1):
+        v = fast.get(t) if isinstance(t, str) else None
+        out.append(v if v is not None else _to_bool(t, "outcome", f"{safe_text(path)} #{i}"))
+    return out
 
 
 def load_cases(path: str) -> List[Case]:
@@ -418,8 +528,8 @@ def load_cases(path: str) -> List[Case]:
     text = _read_text(path)
     recs: List[Dict[str, Any]]
     try:
-        if path.lower().endswith(".csv"):
-            recs = [{(k or "").strip().lower(): v for k, v in r.items()} for r in csv.DictReader(text.splitlines())]
+        if kind_of(path, text) == "csv":
+            recs = csv_records(text, safe_text(path))
         else:
             data = json.loads(text)
             if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
@@ -427,6 +537,8 @@ def load_cases(path: str) -> List[Case]:
             recs = [{str(k).lower(): v for k, v in r.items()} for r in data]
     except (json.JSONDecodeError, RecursionError):
         raise InputError(f"{safe_text(path)} is not valid JSON") from None
+    if len(recs) > MAX_CASES:
+        raise InputError(f"too many cases (limit {MAX_CASES:,})")
     cases: List[Case] = []
     seen = set()
     for i, r in enumerate(recs, start=1):
@@ -480,7 +592,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.cmd == "gate":
-            rounds = load_rounds(args.rounds)
+            rounds = _gate_rounds(args)
             result = evaluate_rounds(
                 rounds, threshold=args.threshold, confidence=args.confidence,
                 min_rounds=args.min_rounds, method=args.method,
@@ -491,6 +603,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             return _plan(args)
         if args.cmd == "oc":
             return _oc(args)
+        if args.cmd == "bound":
+            return _bound(args)
+        if args.cmd == "plan-regress":
+            return _plan_regress(args)
         if args.cmd == "arms":
             return _arms(args)
         if args.cmd == "sequential":
@@ -529,6 +645,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0 if cmp_.verdict == "candidate-better" else 1
     except (ValueError, OverflowError) as e:  # includes InputError and library validation errors
         print(f"passgate: {safe_text(e, 400)}", file=sys.stderr)
+        return 2
+    except BrokenPipeError:  # e.g. `passgate ... | head`; the reader left, nothing more to say
+        try:
+            sys.stdout = open(os.devnull, "w")  # keep the interpreter's exit flush quiet
+        except OSError:
+            pass
+        return 2
+    except MemoryError:
+        print("passgate: out of memory; the input is too large", file=sys.stderr)
+        return 2
+    except RecursionError:
+        print("passgate: input is nested too deeply", file=sys.stderr)
+        return 2
+    except Exception as e:  # never let a crash look like a model regression (exit 1)
+        print(f"passgate: internal error ({type(e).__name__}: {safe_text(e, 200)}); please report it", file=sys.stderr)
         return 2
 
 

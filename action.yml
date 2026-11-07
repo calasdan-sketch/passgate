@@ -37,9 +37,14 @@ runs:
         report="$RUNNER_TEMP/passgate-report.md"
         set +e
         # inputs come through env vars, never interpolated into the script text
-        passgate "$PG_COMMAND" $PG_ARGS --format markdown --explain > "$report"
+        err="$RUNNER_TEMP/passgate-error.txt"
+        passgate "$PG_COMMAND" $PG_ARGS --format markdown --explain > "$report" 2> "$err"
         code=$?
         set -e
+        if [ ! -s "$report" ] && [ -s "$err" ]; then
+          # bad input (exit 2): show the reason in the job summary too, with backticks neutralised
+          { echo "### passgate: could not run"; echo; echo '```'; tr '`' "'" < "$err"; echo '```'; } > "$report"
+        fi
         if [ -s "$report" ]; then
           cat "$report" >> "$GITHUB_STEP_SUMMARY"
           if [ "$PG_COMMENT" = "true" ] && [ -n "$PR_NUMBER" ] && [ "$SAME_REPO" = "true" ]; then

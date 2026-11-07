@@ -202,3 +202,145 @@ def non_inferiority_paired(
 def _check_margin(margin: float) -> None:
     if not 0.0 < margin < 1.0:
         raise ValueError("margin must be between 0 and 1, e.g. 0.03 for 'at most 3 points worse'")
+
+
+# --- sample-size planning for `regress` (added in 0.3.0) ---
+
+def _log_pmf(k: int, n: int, p: float) -> float:
+    if p <= 0.0:
+        return 0.0 if k == 0 else -math.inf
+    if p >= 1.0:
+        return 0.0 if k == n else -math.inf
+    return (
+        math.lgamma(n + 1.0) - math.lgamma(k + 1.0) - math.lgamma(n - k + 1.0)
+        + k * math.log(p) + (n - k) * math.log1p(-p)
+    )
+
+
+def _min_cand_passes(n: int, kb: int, margin: float, conf: float) -> Optional[int]:
+    """Fewest candidate passes (out of n) that make `regress` pass against kb baseline passes (None: impossible)."""
+    def ok(kc: int) -> bool:
+        return newcombe_diff(kc, n, kb, n, conf)[0] > -margin
+    if not ok(n):
+        return None
+    lo, hi = 0, n
+    while lo < hi:  # the lower end of the interval rises with kc
+        mid = (lo + hi) // 2
+        if ok(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def regress_power(
+    trials_per_arm: int, candidate_rate: float, baseline_rate: float, margin: float, alpha: float = 0.05
+) -> float:
+    """Exact probability that `regress` (independent samples, equal arm sizes) passes at these true rates.
+
+    Sums the binomial probabilities of every (candidate passes, baseline passes) outcome for which the
+    Newcombe interval clears -margin. Outcomes with probability below about 1e-13 are skipped.
+    """
+    from .stats import binom_sf
+
+    _check_alpha(alpha)
+    _check_margin(margin)
+    n = int(trials_per_arm)
+    if n < 1:
+        raise ValueError("trials_per_arm must be positive")
+    for r in (candidate_rate, baseline_rate):
+        if not 0.0 <= r <= 1.0:
+            raise ValueError("rates must be between 0 and 1")
+    conf = 1 - 2 * alpha
+    sd = math.sqrt(max(baseline_rate * (1 - baseline_rate), 1e-12) * n)
+    lo_b = max(0, int(n * baseline_rate - 9 * sd) - 1)
+    hi_b = min(n, int(n * baseline_rate + 9 * sd) + 2)
+    total = 0.0
+    for kb in range(lo_b, hi_b + 1):
+        w = _log_pmf(kb, n, baseline_rate)
+        if w < -32.0:
+            continue
+        kmin = _min_cand_passes(n, kb, margin, conf)
+        if kmin is not None:
+            total += math.exp(w) * binom_sf(kmin, n, candidate_rate)
+    return min(1.0, total)
+
+
+def plan_noninferiority(
+    candidate_rate: float,
+    baseline_rate: float,
+    margin: float,
+    power: float = 0.8,
+    alpha: float = 0.05,
+    max_trials: int = 20_000,
+) -> Optional[Dict[str, Any]]:
+    """Trials per arm so that `regress` (independent samples) passes with probability >= ``power``.
+
+    ``candidate_rate`` / ``baseline_rate`` are the true pass rates you assume. Returns None when the
+    candidate's assumed rate is itself ``margin`` or more below the baseline (no sample size helps) or
+    the size would exceed ``max_trials`` per arm. The power is a sawtooth in the size, so the answer is
+    found by a geometric search then bisection: it is a size that reaches the target, and a slightly
+    smaller one may too. ``power_at_trials`` is the exact power at the returned size.
+    """
+    if not 0.0 < power < 1.0:
+        raise ValueError("power must be between 0 and 1")
+    _check_alpha(alpha)
+    _check_margin(margin)
+    for r in (candidate_rate, baseline_rate):
+        if not 0.0 <= r <= 1.0:
+            raise ValueError("rates must be between 0 and 1")
+    if candidate_rate - baseline_rate <= -margin:
+        return None
+
+    def ok(m: int) -> bool:
+        return regress_power(m, candidate_rate, baseline_rate, margin, alpha) >= power
+
+    lo, hi = 1, 8
+    while not ok(hi):
+        lo, hi = hi, int(hi * 1.25) + 1
+        if hi > max_trials:
+            return None
+    while lo + 1 < hi:  # lo fails, hi passes
+        mid = (lo + hi) // 2
+        if ok(mid):
+            hi = mid
+        else:
+            lo = mid
+    return {
+        "trials_per_arm": hi,
+        "total_trials": 2 * hi,
+        "power_at_trials": regress_power(hi, candidate_rate, baseline_rate, margin, alpha),
+        "candidate_rate": candidate_rate,
+        "baseline_rate": baseline_rate,
+        "margin": margin,
+        "alpha": alpha,
+        "power": power,
+    }
+
+
+def min_provable_margin(
+    trials_per_arm: int, rate: float, power: float = 0.8, alpha: float = 0.05, candidate_rate: Optional[float] = None
+) -> Optional[float]:
+    """Smallest margin ``regress`` can prove with ``trials_per_arm`` trials per arm (independent samples).
+
+    The answer to "I can only afford N trials: how small a drop can this check rule out?". ``rate`` is the
+    baseline's true pass rate; the candidate is assumed equal unless ``candidate_rate`` is given. Power rises with
+    the margin, so this bisects it. Returns None when even a margin of 0.5 cannot be proved with that power.
+    """
+    if not 0.0 < power < 1.0:
+        raise ValueError("power must be between 0 and 1")
+    cand = rate if candidate_rate is None else candidate_rate
+
+    def ok(m: float) -> bool:
+        return regress_power(trials_per_arm, cand, rate, m, alpha) >= power
+
+    lo, hi = 1e-4, 0.5
+    if not ok(hi):
+        return None
+    for _ in range(40):
+        mid = (lo + hi) / 2.0
+        if ok(mid):
+            hi = mid
+        else:
+            lo = mid
+    return hi

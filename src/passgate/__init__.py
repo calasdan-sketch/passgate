@@ -11,7 +11,14 @@ from .gate import (
     evaluate_rounds,
 )
 from .multi import Case, CasesResult, compare_cases
-from .noninf import NonInferiority, non_inferiority, non_inferiority_paired
+from .noninf import (
+    NonInferiority,
+    min_provable_margin,
+    non_inferiority,
+    non_inferiority_paired,
+    plan_noninferiority,
+    regress_power,
+)
 from .power import oc_curve, pass_probability, plan_power
 from .sequential import SequentialResult, anytime_lower, run_sequential
 from .stats import (
@@ -39,6 +46,9 @@ __all__ = [
     "NonInferiority",
     "non_inferiority",
     "non_inferiority_paired",
+    "plan_noninferiority",
+    "min_provable_margin",
+    "regress_power",
     "oc_curve",
     "pass_probability",
     "plan_power",

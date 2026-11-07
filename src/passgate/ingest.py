@@ -19,6 +19,7 @@ import csv
 import io
 import json
 import os
+import sys
 import zipfile
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -26,7 +27,8 @@ from .cluster import Item
 from .safe import safe_text
 
 FORMATS = ("auto", "generic", "promptfoo", "inspect")
-MAX_FILE_BYTES = 1 << 30  # 1 GiB
+MAX_FILE_BYTES = 256 << 20  # 256 MiB
+MAX_CSV_FIELD = 1 << 20  # one CSV cell may be 1 MiB (the csv module default is 128 KiB)
 MAX_ZIP_MEMBER_BYTES = 256 << 20
 MAX_ZIP_TOTAL_BYTES = 2 << 30
 MAX_ROWS = 20_000_000
@@ -60,6 +62,8 @@ def _bool(value: Any, where: str) -> bool:
 
 
 def _size_ok(path: str) -> None:
+    if path == "-":
+        return
     try:
         if os.path.getsize(path) > MAX_FILE_BYTES:
             raise IngestError(f"{safe_text(path)} is larger than {MAX_FILE_BYTES >> 20} MiB")
@@ -75,14 +79,60 @@ def _add(arms: Arms, arm: str, item: str, trials: int, passes: int) -> None:
     d[item] = (t + trials, p + passes)
 
 
-def _rows_from_text(path: str, text: str) -> List[Tuple[str, Dict[str, Any]]]:
+def kind_of(path: str, text: str) -> str:
+    """'csv', 'jsonl' or 'json': by extension when it is known, else by looking at the content."""
     low = path.lower()
+    if low.endswith(".csv"):
+        return "csv"
+    if low.endswith((".jsonl", ".ndjson")):
+        return "jsonl"
+    if low.endswith(".json"):
+        return "json"
+    stripped = text.lstrip()
+    if not stripped or stripped[0] == "[":
+        return "json"
+    if stripped[0] == "{":
+        lines = [ln for ln in stripped.splitlines() if ln.strip()]
+        if len(lines) >= 2:
+            try:
+                json.loads(lines[0])
+                return "jsonl"
+            except (json.JSONDecodeError, RecursionError):
+                pass
+        return "json"
+    return "csv"
+
+
+def csv_records(text: str, where: str = "file") -> List[Dict[str, Any]]:
+    """CSV rows as dicts with lower-cased, stripped keys. Detects ',', ';', tab or '|' separators.
+
+    Raises IngestError (never a bare csv.Error) on oversized cells or ragged rows.
+    """
+    csv.field_size_limit(MAX_CSV_FIELD)
+    lines = text.splitlines()
+    first = lines[0] if lines else ""
+    delim = max((",", ";", "\t", "|"), key=first.count)
+    if first.count(delim) == 0:
+        delim = ","
+    out: List[Dict[str, Any]] = []
+    try:
+        for row in csv.DictReader(io.StringIO(text, newline=""), delimiter=delim, strict=True):
+            if None in row:  # more cells than header columns
+                raise IngestError(f"{where} row {len(out) + 1}: more cells than header columns")
+            out.append({(k or "").strip().lower(): v for k, v in row.items()})
+    except csv.Error as e:
+        raise IngestError(f"{where}: not valid CSV ({safe_text(e)})") from None
+    return out
+
+
+def _rows_from_text(path: str, text: str) -> List[Tuple[str, Dict[str, Any]]]:
+    kind = kind_of(path, text)
     rows: List[Tuple[str, Dict[str, Any]]] = []
     try:
-        if low.endswith(".csv"):
-            for i, row in enumerate(csv.DictReader(io.StringIO(text, newline="")), start=1):
-                rows.append((f"row {i}", {(k or "").strip().lower(): v for k, v in row.items()}))
-        elif low.endswith((".jsonl", ".ndjson")):
+        if kind == "csv":
+            for i, row in enumerate(csv_records(text, safe_text(path)), start=1):
+                rows.append((f"row {i}", row))
+        elif kind == "jsonl":
             for i, line in enumerate(text.splitlines(), start=1):
                 if line.strip():
                     obj = json.loads(line)
@@ -95,7 +145,11 @@ def _rows_from_text(path: str, text: str) -> List[Tuple[str, Dict[str, Any]]]:
                 raise IngestError("expected a JSON list of rows")
             for i, obj in enumerate(data, start=1):
                 if not isinstance(obj, dict):
-                    raise IngestError(f"item {i}: expected an object")
+                    hint = (
+                        "; this looks like a rounds file, which is for 'passgate gate'"
+                        if isinstance(obj, list) and len(obj) == 2 else ""
+                    )
+                    raise IngestError(f"item {i}: expected an object{hint}")
                 rows.append((f"item {i}", obj))
     except json.JSONDecodeError as e:
         raise IngestError(f"not valid JSON: {safe_text(e)}") from None
@@ -106,15 +160,42 @@ def _rows_from_text(path: str, text: str) -> List[Tuple[str, Dict[str, Any]]]:
     return rows
 
 
-def _read(path: str) -> str:
+_STDIN_CACHE: List[str] = []
+
+
+def read_text(path: str) -> str:
+    """Whole text of ``path`` ('-' = standard input), capped at MAX_FILE_BYTES even for special files."""
+    if path == "-":
+        if not _STDIN_CACHE:
+            try:
+                data = sys.stdin.buffer.read(MAX_FILE_BYTES + 1)
+            except (OSError, ValueError) as e:
+                raise IngestError(f"cannot read standard input: {safe_text(e)}") from None
+            _STDIN_CACHE.append(_decode(data, "standard input"))
+        return _STDIN_CACHE[0]
     _size_ok(path)
     try:
-        with open(path, encoding="utf-8-sig", newline="") as fh:
-            return fh.read()
-    except UnicodeDecodeError:
-        raise IngestError(f"{safe_text(path)} is not valid UTF-8 text") from None
+        with open(path, "rb") as fh:
+            data = fh.read(MAX_FILE_BYTES + 1)
     except OSError as e:
         raise IngestError(f"cannot read {safe_text(path)}: {safe_text(e.strerror or e)}") from None
+    return _decode(data, safe_text(path))
+
+
+def _decode(data: bytes, what: str) -> str:
+    if len(data) > MAX_FILE_BYTES:
+        raise IngestError(f"{what} is larger than {MAX_FILE_BYTES >> 20} MiB")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise IngestError(f"{what} is not valid UTF-8 text") from None
+    if "\x00" in text:
+        raise IngestError(f"{what} contains NUL bytes; it is not a text results file")
+    return text
+
+
+def _read(path: str) -> str:
+    return read_text(path)
 
 
 def _generic(path: str) -> Arms:
@@ -148,7 +229,7 @@ def _provider_name(p: Any) -> str:
 def _promptfoo(path: str) -> Arms:
     text = _read(path)
     rows: List[Dict[str, Any]]
-    if path.lower().endswith((".jsonl", ".ndjson")):
+    if kind_of(path, text) in ("jsonl", "csv"):
         rows = [r for _, r in _rows_from_text(path, text)]
     else:
         try:
@@ -217,8 +298,12 @@ def _inspect_samples(path: str) -> Iterable[Dict[str, Any]]:
                 if info.file_size > MAX_ZIP_MEMBER_BYTES:
                     raise IngestError("archive member is too large")
                 try:
-                    yield json.loads(zf.read(info).decode("utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+                    with zf.open(info) as member:  # read at most the cap, whatever the header claims
+                        raw = member.read(MAX_ZIP_MEMBER_BYTES + 1)
+                    if len(raw) > MAX_ZIP_MEMBER_BYTES:
+                        raise IngestError("archive member is too large")
+                    yield json.loads(raw.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError, RecursionError, zipfile.BadZipFile, OSError, EOFError):
                     raise IngestError(f"unreadable sample {safe_text(info.filename, 60)}") from None
         return
     text = _read(path)
@@ -261,7 +346,7 @@ def sniff(path: str) -> str:
     low = path.lower()
     if low.endswith(".eval"):
         return "inspect"
-    if low.endswith((".csv", ".jsonl", ".ndjson")):
+    if kind_of(path, _read(path)[:4000]) in ("csv", "jsonl"):
         head = _read(path)[:4000]
         return "promptfoo" if ("testIdx" in head and "success" in head) else "generic"
     head = _read(path)[:20000]

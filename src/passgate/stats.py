@@ -8,6 +8,7 @@ exact integer arithmetic for small tables and log-space sums for large ones.
 from __future__ import annotations
 
 import math
+import time
 from functools import lru_cache
 from statistics import NormalDist
 from typing import Optional, Tuple
@@ -198,6 +199,7 @@ def trials_needed(
     confidence: float = 0.95,
     method: str = "wilson",
     max_trials: int = 10**8,
+    deadline: Optional[float] = None,
 ) -> Optional[Tuple[int, int]]:
     """Smallest round size N at which a round passing at ``rate`` clears the gate.
 
@@ -207,6 +209,8 @@ def trials_needed(
 
     Note: this is the break-even size. If the true rate is exactly ``rate``,
     a round of size N clears only about half the time - plan with headroom.
+
+    ``deadline`` (a ``time.monotonic()`` value) makes the search raise ``TimeoutError`` once passed.
     """
     if not 0.0 <= rate <= 1.0:
         raise ValueError("rate must be between 0 and 1")
@@ -221,6 +225,8 @@ def trials_needed(
         max_trials = min(max_trials, EXACT_MAX_TRIALS)
 
     def ok(n: int) -> bool:
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError("trials_needed deadline passed")
         return _lower_real(rate, n, confidence, method) >= threshold
 
     hi = 1
@@ -237,6 +243,8 @@ def trials_needed(
             lo = mid + 1
     # integer passes: step up until floor(rate * n) passes is enough
     for n in range(lo, min(max_trials, lo + 2000) + 1):  # usually 1-3 steps
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError("trials_needed deadline passed")
         k = min_passes(n, threshold, confidence, method)
         if k is not None and k <= math.floor(rate * n + 1e-9):
             return n, k

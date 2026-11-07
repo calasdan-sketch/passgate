@@ -247,7 +247,10 @@ def evaluate_rounds(
         if not meets:
             if budget > 0 and time.monotonic() < deadline:
                 budget -= 1
-                needed = trials_needed(r.rate, threshold, confidence, method, max_trials=10**7)
+                try:
+                    needed = trials_needed(r.rate, threshold, confidence, method, max_trials=10**7, deadline=deadline)
+                except TimeoutError:
+                    skipped = True
             else:
                 skipped = True
         result.rounds.append(

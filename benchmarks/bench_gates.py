@@ -22,7 +22,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from passgate import Round, compare, min_passes  # noqa: E402
 from passgate.cluster import Item, evaluate_items  # noqa: E402
 from passgate.multi import bh_adjust, holm_adjust  # noqa: E402
-from passgate.noninf import newcombe_diff, newcombe_paired_diff, non_inferiority  # noqa: E402
+from passgate.noninf import (  # noqa: E402
+    newcombe_diff,
+    newcombe_paired_diff,
+    non_inferiority,
+)
 from passgate.power import pass_probability, plan_power  # noqa: E402
 from passgate.sequential import _futility_floor, pass_boundary  # noqa: E402
 from passgate.stats import fisher_exact_2x2  # noqa: E402
