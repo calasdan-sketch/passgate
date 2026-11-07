@@ -18,7 +18,7 @@ def safe_text(text: object, limit: int = 80) -> str:
     out = []
     for ch in str(text):
         cp = ord(ch)
-        if cp in _INVISIBLE or unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp"):
+        if cp in _INVISIBLE or unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp"):
             out.append(f"\\x{cp:02x}" if cp < 0x100 else f"\\u{cp:04x}" if cp < 0x10000 else f"\\U{cp:08x}")
         else:
             out.append(ch)

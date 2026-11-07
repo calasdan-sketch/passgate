@@ -1,6 +1,6 @@
 # passgate
 
-**Pass once is luck. Pass^N is a gate.** A zero-dependency CI gate for LLM evals: every evaluation round must clear a *conservative* pass-rate bar, not just the average. It also tells you how many trials you need, and whether a candidate really beats your baseline.
+**Pass once is luck. Pass^N is a gate.** A zero-dependency CI gate for LLM evals: every evaluation round must clear a *conservative* pass-rate bar, not just the average. It tells you how many trials you need (with a power target), whether a candidate is *not worse* than the baseline, when you can safely stop early, and it explains the verdict in plain English.
 
 Eval flakiness is the quiet killer. A prompt scores 91% once, ships, and regresses. Averaging hides the weak round. `passgate` requires each round's lower confidence bound (Wilson, or exact Clopper-Pearson) to clear your bar. A candidate that needs 3 good rounds to ship must produce 3 good rounds, with enough trials behind each one.
 
@@ -40,11 +40,17 @@ Exit code `1` fails CI. Every failing round says what would fix it. **93/100 doe
 | command | answers | exit 0 when |
 |---|---|---|
 | `gate FILE` | Does every round clear the bar? | all rounds clear and there are at least `--min-rounds` |
-| `plan --rate R` | How many trials per round do I need? | the target is achievable |
-| `compare --candidate K/N --baseline K/N` | Is the candidate better? (independent samples) | candidate is significantly better |
+| `plan --rate R [--power P]` | How many trials per round do I need? | the target is achievable |
+| `oc --trials N` | How likely is a good (or bad) candidate to pass? | always |
+| `compare --candidate K/N --baseline K/N` | Is the candidate *better*? (independent samples) | candidate is significantly better |
 | `paired FILE` | Is the candidate better on the **same items**? | candidate is significantly better |
+| `regress --margin M ...` | Is the candidate **not worse** than the baseline by more than M? | superior or non-inferior |
+| `sequential FILE` | Can I stop early, peeking after every trial? | certified above the bar |
+| `items FILE` | Pass rate / pass^k when each item is tried several times | cluster-aware lower bound clears the bar |
+| `cases FILE` | Which of many cases regressed? (multiple-testing control) | no supported regression |
+| `arms FILE` | Which prompts / providers does this promptfoo or Inspect file hold? | always |
 
-All commands exit `2` on bad input (missing file, bad JSON/CSV, invalid number, duplicate item, empty file). A typo is never mistaken for a model regression, and an empty input never passes.
+All commands exit `2` on bad input (missing file, bad JSON/CSV, invalid number, duplicate item, empty file). A typo is never mistaken for a model regression, and an empty input never passes. Commands that judge a result (`gate`, `compare`, `paired`, `regress`, `sequential`, `items`, `cases`) accept `--format text|json|markdown|junit`, `--explain` (a plain-English paragraph for people who do not read confidence intervals) and `--github-summary`.
 
 ### gate
 
@@ -101,15 +107,87 @@ passgate paired results.csv
 
 Input can be CSV, a JSON list, or JSONL (`.jsonl`/`.ndjson`) with `candidate` and `baseline` fields. Values may be `1/0`, `true/false`, `pass/fail` or `yes/no`. The `item` (or `id`) field is optional, but a duplicate id is rejected so an item cannot be counted twice. Example from the test suite (200 shared items, 12 fixed, 2 broken): pooled `compare` says *inconclusive*, while `paired` says *candidate-better* (p < 0.01).
 
+### plan --power: size the eval so a good candidate actually passes
+
+`plan` without `--power` gives the break-even size. With a power target it gives the size at which a candidate whose true rate is `--rate` passes the gate with at least that probability (exact binomial arithmetic, no simulation). With `--rounds 3` all three rounds must clear.
+
+```bash
+passgate plan --rate 0.95 --threshold 0.9 --power 0.8 --rounds 3
+# plan: run 327 trials per round (305+ passes to clear); a candidate whose true rate is 0.950 then passes 81.8% of the time (all 3 rounds).
+passgate oc --trials 327 --threshold 0.9 --rounds 3      # the whole operating curve
+```
+
+The pass probability is a sawtooth in the trial count (pass counts are whole numbers), so the output also reports the size from which the target holds for every larger size. The returned size is the true minimum (every size up to 20,000 is checked one by one).
+
+### regress: "did we get worse?" is not the same question as "are we better?"
+
+`compare` asks whether the candidate is *better*. Two identical prompts fail that test about 95% of the time, which makes it useless as a CI regression check. `regress` asks the right question: with a tolerated drop of `--margin`, is the lower end of the confidence interval for (candidate - baseline) above `-margin`? It uses Newcombe's hybrid score interval (independent items) or its paired version (same items), validated against statsmodels and by simulation.
+
+```bash
+passgate regress --margin 0.03 --candidate 188/200 --baseline 190/200 --explain
+passgate regress --margin 0.03 --paired results.csv        # both arms ran the same items
+```
+
+Verdicts: `superior`, `non-inferior` (exit 0), `inconclusive`, `inferior` (exit 1). Inconclusive means the data cannot rule out a drop bigger than the margin; it never passes. Note that proving "no worse than 5 points" at 90% power takes a few hundred trials per arm.
+
+### sequential: stop the moment the evidence is conclusive
+
+Checking a Wilson bound after every trial and stopping when it clears is a common mistake: at a true rate exactly on the bar it "passes" about 14% of the time instead of at most 2.5% (see the benchmark). `sequential` uses a mixture likelihood-ratio test whose false-pass rate is controlled over *all* stopping times (Ville's inequality), so you can look after every trial.
+
+```bash
+passgate sequential outcomes.txt --threshold 0.9 --max-trials 1000    # one 1/0 per line
+# sequential: PASS after 66 trial(s) (65 passes), any-time lower bound 0.901 vs bar 0.900
+```
+
+It also stops with `fail` as soon as certification is impossible within `--max-trials`. A stream that ends early is `undecided` and never passes. The default `--alpha 0.025` matches the one-sided level of a 95% gate. `pass_boundary()` returns the pass-count table if you want to build the stopping rule into your own runner. The price: at a horizon of 500 trials a candidate at 0.95 is certified 91.5% of the time versus 98.8% for a single fixed look, in exchange for needing about half as many trials on average.
+
+### items: when each test item is tried several times
+
+50 items sampled 10 times are not 500 independent coin flips. `items` treats the item as the unit: a cluster-robust standard error gives a design effect, and the Wilson bound is evaluated at the effective sample size with a Student-t critical value. It never reports a bound looser than plain Wilson. With `--k 3` it reports unbiased **pass^k** (all of k tries succeed, tau-bench) or `--metric pass@k` per item, with a t-interval over items (approximate).
+
+```bash
+passgate items results.json --threshold 0.8 --explain         # promptfoo, Inspect, CSV or JSONL
+passgate items results.json --k 4 --threshold 0.6             # chance that 4 tries in a row succeed
+```
+
+### cases: find the regressions without drowning in false alarms
+
+Test 50 cases at 5% each and you get at least one false alarm 34% of the time (benchmark section 5) even when nothing changed. `cases` runs a one-sided Fisher exact test per case and adjusts with Holm (any false alarm <= alpha) or Benjamini-Hochberg (`--adjust bh`). Adjusted p-values match statsmodels. By contrast, `gate` needs no correction: requiring *every* round to clear is an intersection-union test, already valid at its level.
+
+```bash
+printf 'case,cand_passes,cand_trials,base_passes,base_trials\na,10,20,19,20\nb,18,20,19,20\n' > cases.csv
+passgate cases cases.csv --explain
+```
+
+### Reading promptfoo and Inspect AI results
+
+`items`, `arms`, `paired` and `regress` read results straight from other tools. Formats follow each tool's public docs; every reader fails closed (exit 2) on anything it cannot interpret instead of guessing.
+
+- **promptfoo** `results.json` / `.jsonl`: rows with `success`, `testIdx`, `promptIdx`, `provider`. `--repeat` runs become trials of one item. Provider errors count as failures. Use `passgate arms FILE` to list prompt/provider arms, then `--arm`, or `--candidate-arm/--baseline-arm` for `paired`.
+- **Inspect AI** `.json` logs and `.eval` archives: `epoch` repeats become trials of one sample. Scores `C`/`1` pass; `I`/`N`/`0` fail; partial credit (`P`, fractions) is refused. Pick a scorer with `--scorer`. Compare two runs with `paired run_a.eval --baseline-file run_b.eval`.
+- **CSV / JSON / JSONL**: one outcome per row (`pass`/`passed`/`success`/`correct`/`ok`) or `trials` + `passes`, plus optional `item` and `arm`.
+
 ## CI
 
 ```yaml
 - run: pip install passgate
 - run: python run_evals.py --out rounds.json   # your eval runner
-- run: passgate gate rounds.json --threshold 0.9 --min-rounds 3 --github-summary
+- run: passgate gate rounds.json --threshold 0.9 --min-rounds 3 --github-summary --explain
 ```
 
-`--github-summary` appends a Markdown table to the job summary (`$GITHUB_STEP_SUMMARY`). `--format markdown` prints the same table, for a PR comment. Labels and ids from your files are treated as untrusted. Terminal control codes, bidi overrides and zero-width characters are shown escaped (`\x1b`, `\u202e`). In Markdown output, every Markdown-significant punctuation mark is escaped too. That covers tables, HTML, `@mentions`, `:emoji:` codes, bare-URL autolinks and `#123` references, so a hostile label cannot rewrite your logs, fill your job summary or ping your team.
+`--github-summary` appends a Markdown report to the job summary (`$GITHUB_STEP_SUMMARY`). `--format markdown` prints the same report, for a PR comment, and `--format junit` emits JUnit XML so GitLab, Jenkins, Azure DevOps and GitHub test reporters show each round (or case) as a test.
+
+A composite GitHub Action is included ([`action.yml`](action.yml)). It installs passgate from the action's own checkout, runs one command, writes the Markdown verdict to the job summary, optionally posts or updates a pull-request comment (`comment: "true"`, needs `pull-requests: write`, skipped for forks), and keeps passgate's exit code:
+
+```yaml
+- uses: calasdan-sketch/passgate@main        # pin a tag or commit in real use
+  with:
+    command: regress
+    args: --margin 0.03 --paired results.csv
+    comment: "true"
+```
+
+The action's shell script was exercised locally (summary written, exit codes kept); it has not been run on GitHub's runners. Labels and ids from your files are treated as untrusted. Terminal control codes, bidi overrides and zero-width characters are shown escaped (`\x1b`, `\u202e`). In Markdown output, every Markdown-significant punctuation mark is escaped too. That covers tables, HTML, `@mentions`, `:emoji:` codes, bare-URL autolinks and `#123` references, so a hostile label cannot rewrite your logs, fill your job summary or ping your team. JUnit output escapes the same characters, so it is always well-formed XML.
 
 ## Python API
 
@@ -126,36 +204,66 @@ print(result.to_markdown())
 print(compare([Round(100, 93)], [Round(100, 85)], test="fisher").verdict)
 print(compare_paired([(True, False), (True, True), (False, False)]).verdict)
 print(trials_needed(rate=0.95, threshold=0.9))   # (140, 133)
+
+from passgate import non_inferiority, plan_power, run_sequential, evaluate_items, Item, compare_cases, Case
+print(plan_power(0.95, 0.9, power=0.8)["trials"])                           # 217
+print(non_inferiority([Round(1000, 900)], [Round(1000, 905)], margin=0.05).verdict)
+print(run_sequential([True] * 80, threshold=0.9).decision)                   # pass
+print(evaluate_items([Item(10, 10)] * 20 + [Item(10, 0)] * 5, threshold=0.6).passed)
 ```
 
 `Round` accepts any integer-like value (including NumPy integers) and whole-number floats such as `93.0`. It rejects fractions and booleans.
 
 ## How it compares
 
-Each statement about another tool links to the public page it comes from. If something has changed since, please open an issue.
+Each statement about another tool comes from the public page it links to, or from a text search of that tool's published source (versions below, checked 2026-11-07; installed and read, **not executed**). "Not found" means the search found nothing, which can miss things. If something has changed since, please open an issue.
 
-| | passgate | [errorbars](https://pypi.org/project/errorbars/) | [evalpower](https://pypi.org/project/evalpower/) | [flakelens](https://pypi.org/project/flakelens/) | [scorio](https://scorio.readthedocs.io/en/latest/api/eval.html) |
-|---|---|---|---|---|---|
-| Runtime dependencies | none | numpy | none | none | NumPy (used throughout its API docs) |
-| Python | 3.9+ | 3.10+ | 3.11+ | 3.10+ | not checked |
-| Pass/fail threshold gate with CI exit codes | yes (0 / 1 / 2) | not stated on its page | no (always exits 0, by design) | yes (non-zero when a case is broken) | no |
-| Per-round lower bound | Wilson or Clopper-Pearson | - | Clopper-Pearson | Wilson | normal-approx. Bayesian |
-| "How many trials do I need?" | yes (`plan`, hints on failure) | yes (power analysis) | yes (runs needed) | - | - |
-| Paired test on shared items | exact McNemar | exact McNemar | - (not a between-model test) | - | - |
-| Clustered standard errors | no | yes | - | - | - |
-| pass^k estimator | no | - | yes | - | yes |
-| Runs your prompts for you | no | no | no | yes | no |
+| | passgate 0.3 | [errorbars](https://pypi.org/project/errorbars/) 0.2.4 | [evalpower](https://pypi.org/project/evalpower/) 0.1.0 | [flakelens](https://pypi.org/project/flakelens/) 0.1.1 | [scorio](https://scorio.readthedocs.io/en/latest/api/eval.html) 0.2.3 | [Inspect AI](https://inspect.aisi.org.uk/) 0.3.288 | [promptfoo](https://www.promptfoo.dev/docs/configuration/outputs/) 0.125.1 |
+|---|---|---|---|---|---|---|---|
+| Runtime dependencies | none | numpy | none | none | NumPy | many (full eval framework) | Node.js app |
+| Python | 3.9+ | 3.10+ | 3.11+ | 3.10+ | 3.10+ | n/a | n/a |
+| Pass/fail threshold gate with CI exit codes | yes (0 / 1 / 2) | not stated on its page | no (always exits 0, by design) | yes (non-zero when a case is broken) | no | no gate found | pass-rate threshold only (`PROMPTFOO_PASS_RATE_THRESHOLD`); no confidence bound found |
+| Per-round lower bound | Wilson or Clopper-Pearson | - | Clopper-Pearson | Wilson | normal-approx. Bayesian | Wilson CI metric available | - |
+| Sample-size planning | `plan`, with power target and operating curve | power analysis (min. detectable effect) | runs needed | - | - | - | - |
+| Paired test on shared items | exact McNemar | exact McNemar | - | - | - | - | - |
+| Non-inferiority ("not worse by more than M") | yes (`regress`) | not found | not found | not found | not found | not found | not found |
+| Early stopping with Type I control | yes (`sequential`) | not found | not found | not found | sequential-inference helpers (`sinf`) | not found | not found |
+| Multiple-testing control across cases | Holm / BH (`cases`) | Holm on leaderboard pairs | - | - | - | - | - |
+| Clustered items | cluster-aware Wilson (`items`) | clustered standard errors | - | - | - | clustered standard error metric | - |
+| pass^k / pass@k | unbiased per item (`items --k`) | not found | yes | - | yes | pass@k reducer | - |
+| Reads promptfoo / Inspect results | yes | Inspect adapter (extra) | - | - | not checked | native | native |
+| JUnit XML / PR-comment action | yes / yes (untested on runners) | not found | not found | not found | not found | not found | not checked |
+| Plain-English verdict | `--explain` | - | - | - | - | - | - |
+| Runs your prompts for you | no | no | no | yes | no | yes | yes |
 
-What others do better: errorbars handles clustered questions and multi-model leaderboards. evalpower and scorio estimate pass^k ([τ-bench](https://arxiv.org/abs/2406.12045) defines pass^k). flakelens runs your test cases itself. If you need those, use them. passgate is the small, strict, dependency-free gate you put at the end of a pipeline.
+What others do better: errorbars has richer clustered/multi-model leaderboards and plots. evalpower and scorio estimate pass^k from run counts without needing item-level files. Inspect AI and promptfoo run the evals themselves and have large ecosystems. flakelens runs your test cases itself. If you need those, use them; passgate is the small, strict, dependency-free gate you put at the end of the pipeline, and it reads their output.
+
+### Measured: how often does each gate make the wrong call?
+
+Committed Monte Carlo benchmark with fixed seeds: [`benchmarks/bench_gates.py`](benchmarks/bench_gates.py), full tables in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md). Re-run it with `pip install -e ".[dev]" && python benchmarks/bench_gates.py` (about a minute). Headlines (bar 0.9 unless noted):
+
+| situation | naive rule | passgate |
+|---|---|---|
+| true rate 0.89 (below the bar), 3 rounds of 327 trials: false pass | 27.7% (single run) / 17.2% (mean of 3) | 0.0% |
+| true rate 0.95, same setup: correct pass | ~100% | 81.4% (the 80% power you asked `plan` for; 8.5% at 100 trials, so size your eval) |
+| peeking after every trial, true rate exactly 0.90: false pass | 13.7% (Wilson checked every trial) | 1.5% (`sequential`; nominal limit 2.5%) |
+| 30 items x 10 tries, ICC 0.3, true rate 0.80, bar 0.80: false pass | 16.4% (plain pooled Wilson) | 3.1% (`items`) |
+| candidate equal to baseline, 200 trials each: passes the CI check | 5.4% (`compare` demands "better") | 50.2% (`regress`, margin 0.05); a true 0.05 drop passes 4.9% |
+| 50 cases, nothing changed: any false alarm | 34.0% (raw p < 0.05) | 0.1% (Holm) |
+
+The honest cost: passgate is strict. With few trials it blocks good candidates (0% pass at 30 trials per round, 8.5% at 100), and the sequential test certifies a 0.95 candidate within 500 trials 91.5% of the time versus 98.8% for one fixed look. Cluster-aware bounds are still slightly liberal with only 10 items (4.5% false pass at the boundary in the table). Use `plan --power` to size the eval.
 
 ## Honest limits
 
-- The Wilson and Clopper-Pearson intervals are two-sided, so a 95% interval gives a one-sided 97.5% lower bound per round. Requiring every round to clear is conservative, but passgate applies no formal multiple-testing correction.
-- Rounds are treated as independent samples of one pass rate. If rounds reuse the same test items, or items come in correlated clusters, the real uncertainty is larger than the bound shows. See [Miller 2024, "Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640) on clustered standard errors.
+- The Wilson and Clopper-Pearson intervals are two-sided, so a 95% interval gives a one-sided 97.5% lower bound per round. Requiring every round to clear is an intersection-union test, which needs no multiple-testing correction for the claim "every round is above the bar". Searching many *cases* for a regression is a different question; use `cases` for that.
+- `gate` treats trials in a round as independent. If rounds reuse the same test items, or items are tried several times, the real uncertainty is larger than the bound shows. Use `items` for repeated trials; see [Miller 2024, "Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640). The `items` bound uses an estimated design effect, so it is itself approximate with few items (under about 20) and the pass^k interval is a t-interval over per-item estimates, not exact.
+- `sequential` and `regress` need real sample sizes. Tiny streams never certify, and equal prompts pass `regress` only about half the time at 200 trials per arm and a 5-point margin; `regress` has no power planner yet.
+- The `sequential` any-time guarantee is for a fixed bar and a stream of independent trials. It does not cover changing the bar after seeing data, and its bound (`anytime_lower`) is wider than a fixed-size Wilson bound by design.
+- The promptfoo and Inspect readers follow public docs and the published log schema; they are tested on synthetic files in that shape, not on every version of those tools. Unrecognised data fails closed. JUnit and the GitHub Action cover the common cases; there is no SARIF output.
 - `compare` pools all rounds and does not model variance from one round to the next. Use `paired` when both arms share items.
 - `plan` and the failure hints give the *break-even* size. If your true rate equals `--rate`, a round of that size clears only about half the time.
 - Fisher p-values are exact (integer arithmetic) up to 5,000 total trials. Above that they use log-space sums. The exact methods (Fisher, McNemar, Clopper-Pearson) are refused above 10^8 trials, where float precision degrades: `compare` then reports Fisher as n/a and decides by the z-test, and `--test fisher`, `paired` or `--method exact` exit 2. Wilson and the z-test have no such limit.
-- Accuracy is checked against SciPy by [`scripts/crosscheck_scipy.py`](scripts/crosscheck_scipy.py) (`pip install -e ".[dev]"`; SciPy is a dev-only oracle, never a runtime dependency). The test suite runs a quick version when SciPy is installed. A recent full run gave worst errors of about 5e-13 (Clopper-Pearson), 2e-10 (Fisher, up to about 58,000 trials) and 2e-10 (McNemar, up to 10^5 items). Accuracy between that and 10^8 was spot-checked by hand at about 1e-7 relative, but not by the script.
+- Accuracy is checked against SciPy (and statsmodels for Newcombe intervals and p-value adjustments) by [`scripts/crosscheck_scipy.py`](scripts/crosscheck_scipy.py) (`pip install -e ".[dev]"`; SciPy is a dev-only oracle, never a runtime dependency). The test suite runs a quick version when SciPy is installed. A recent full run gave worst errors of about 5e-13 (Clopper-Pearson), 2e-10 (Fisher, up to about 58,000 trials) and 2e-10 (McNemar, up to 10^5 items). Accuracy between that and 10^8 was spot-checked by hand at about 1e-7 relative, but not by the script.
 - With `--method exact`, "trials needed" hints are computed for at most 25 failing rounds and 2 seconds in total. The rest say "hint skipped". Hints never affect the verdict.
 - If an LLM judge decides pass/fail, the judge's own noise is inside your counts. passgate cannot separate it out.
 

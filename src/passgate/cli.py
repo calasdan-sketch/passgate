@@ -12,8 +12,15 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import __version__
+from .cluster import evaluate_items
 from .gate import Round, compare, compare_paired, evaluate_rounds
+from .ingest import FORMATS, load_arms, load_items, pairs_from_arms, pick_arm
+from .junit import to_junit
+from .multi import ADJUSTMENTS, Case, compare_cases
+from .noninf import non_inferiority, non_inferiority_paired
+from .power import oc_curve, plan_power
 from .safe import safe_text
+from .sequential import run_sequential
 from .stats import METHODS, trials_needed
 
 
@@ -219,19 +226,77 @@ def _build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--alpha", type=float, default=0.05)
     _add_output(pr)
 
+    pr.add_argument("--from", dest="src", choices=FORMATS, default="auto", help="input format for promptfoo / Inspect files")
+    pr.add_argument("--candidate-arm", help="arm (prompt/provider) to treat as the candidate in a multi-arm file")
+    pr.add_argument("--baseline-arm", help="arm to treat as the baseline in a multi-arm file")
+    pr.add_argument("--baseline-file", help="a second results file holding the baseline run (items matched by id)")
+    pr.add_argument("--scorer", help="Inspect scorer name when a log has several")
+
+    rg = sub.add_parser("regress", help="non-inferiority: is the candidate NOT meaningfully worse than the baseline?")
+    rg.add_argument("--margin", type=float, required=True, help="largest drop you accept, e.g. 0.03 = 3 points")
+    rg.add_argument("--candidate", action="append", help="PASSES/TRIALS (repeatable); different items from the baseline")
+    rg.add_argument("--baseline", action="append", help="PASSES/TRIALS (repeatable)")
+    rg.add_argument("--paired", help="per-item results file where both arms ran the SAME items (see 'paired')")
+    rg.add_argument("--alpha", type=float, default=0.05, help="one-sided false-pass rate (default 0.05)")
+    rg.add_argument("--from", dest="src", choices=FORMATS, default="auto")
+    rg.add_argument("--candidate-arm")
+    rg.add_argument("--baseline-arm")
+    rg.add_argument("--baseline-file")
+    rg.add_argument("--scorer")
+    _add_output(rg)
+
+    sq = sub.add_parser("sequential", help="stop early: certify a pass rate while peeking after every trial")
+    sq.add_argument("outcomes", help="file of outcomes in run order: 1/0, true/false or pass/fail, one per line (or a JSON list)")
+    sq.add_argument("--threshold", type=float, default=0.9)
+    sq.add_argument("--alpha", type=float, default=0.025, help="false-pass rate over ALL stopping times (default 0.025, the one-sided level of a 95% gate)")
+    sq.add_argument("--max-trials", type=int, default=1000, help="trial budget; gives up (fails) beyond this")
+    _add_output(sq)
+
+    it = sub.add_parser("items", help="cluster-aware gate when each item is tried several times (also pass^k)")
+    it.add_argument("results", help="CSV/JSON/JSONL, promptfoo results, or Inspect log (.json / .eval)")
+    it.add_argument("--threshold", type=float, default=0.9)
+    it.add_argument("--confidence", type=float, default=0.95)
+    it.add_argument("--k", type=int, default=1, help="1 = pooled pass rate; k>=2 = pass^k (default metric)")
+    it.add_argument("--metric", choices=("pass^k", "pass@k"), default="pass^k")
+    it.add_argument("--from", dest="src", choices=FORMATS, default="auto")
+    it.add_argument("--arm", help="which arm (prompt/provider) when the file holds several")
+    it.add_argument("--scorer", help="Inspect scorer name when a log has several")
+    _add_output(it)
+
+    cs = sub.add_parser("cases", help="per-case regression search with multiple-testing control")
+    cs.add_argument("results", help="CSV/JSON: case, cand_passes, cand_trials, base_passes, base_trials")
+    cs.add_argument("--alpha", type=float, default=0.05)
+    cs.add_argument("--adjust", choices=ADJUSTMENTS, default="holm", help="holm (any false alarm <= alpha), bh (FDR), none")
+    _add_output(cs)
+
+    ar = sub.add_parser("arms", help="list the arms (prompt/provider/model) and item counts in a results file")
+    ar.add_argument("results")
+    ar.add_argument("--from", dest="src", choices=FORMATS, default="auto")
+    ar.add_argument("--scorer")
+
+    oc = sub.add_parser("oc", help="operating characteristic: chance the gate passes at each true pass rate")
+    oc.add_argument("--trials", type=int, required=True, help="trials per round")
+    oc.add_argument("--threshold", type=float, default=0.9)
+    oc.add_argument("--confidence", type=float, default=0.95)
+    oc.add_argument("--method", choices=METHODS, default="wilson")
+    oc.add_argument("--rounds", type=int, default=1, help="all of this many rounds must clear")
+    oc.add_argument("--json", action="store_true")
+
     pl = sub.add_parser("plan", help="how many trials per round to certify a threshold at an expected rate")
     pl.add_argument("--rate", type=float, required=True, help="pass rate you expect per round, e.g. 0.95")
     pl.add_argument("--threshold", type=float, default=0.9)
     pl.add_argument("--confidence", type=float, default=0.95)
     pl.add_argument("--method", choices=METHODS, default="wilson")
     pl.add_argument("--rounds", type=int, default=1, help="rounds you will run (for the total)")
+    pl.add_argument("--power", type=float, default=None, help="size so a candidate at --rate passes with at least this probability (e.g. 0.8)")
     pl.add_argument("--json", action="store_true", help="machine-readable output")
     return ap
 
 
 def _add_output(p: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true", help="machine-readable output (same as --format json)")
-    p.add_argument("--format", choices=("text", "json", "markdown"), default=None, help="output format")
+    p.add_argument("--format", choices=("text", "json", "markdown", "junit"), default=None, help="output format")
+    p.add_argument("--explain", action="store_true", help="add a plain-English explanation of the verdict")
     p.add_argument(
         "--github-summary", action="store_true",
         help="also append a Markdown report to $GITHUB_STEP_SUMMARY when it is set",
@@ -240,12 +305,19 @@ def _add_output(p: argparse.ArgumentParser) -> None:
 
 def _render(args: argparse.Namespace, obj: Any) -> None:
     fmt = "json" if args.json else (args.format or "text")
+    explain = getattr(args, "explain", False) and hasattr(obj, "explain")
     if fmt == "json":
-        _emit(json.dumps(obj.as_dict(), indent=2))
+        d = obj.as_dict()
+        if explain:
+            d["explanation"] = obj.explain()
+        _emit(json.dumps(d, indent=2))
+    elif fmt == "junit":
+        _emit(to_junit(obj).rstrip("\n"))
     elif fmt == "markdown":
-        _emit(obj.to_markdown().rstrip("\n"))
+        md = obj.to_markdown().rstrip("\n")
+        _emit(md + (f"\n\n{obj.explain()}" if explain and obj.explain() not in md else ""))
     else:
-        _emit(str(obj))
+        _emit(str(obj) + (f"\nIn plain words: {obj.explain()}" if explain else ""))
     if getattr(args, "github_summary", False):
         target = os.environ.get("GITHUB_STEP_SUMMARY")
         if not target:
@@ -261,6 +333,8 @@ def _render(args: argparse.Namespace, obj: Any) -> None:
 def _plan(args: argparse.Namespace) -> int:
     if args.rounds < 1:
         raise InputError("--rounds must be >= 1")
+    if args.power is not None:
+        return _plan_power(args)
     res = trials_needed(args.rate, args.threshold, args.confidence, args.method)
     if args.json:
         _emit(json.dumps({
@@ -285,6 +359,114 @@ def _plan(args: argparse.Namespace) -> int:
     return 0 if res is not None else 1
 
 
+def _plan_power(args: argparse.Namespace) -> int:
+    res = plan_power(args.rate, args.threshold, args.power, args.confidence, args.method, args.rounds)
+    if args.json:
+        _emit(json.dumps({"rate": args.rate, "threshold": args.threshold, "power": args.power,
+                          "achievable": res is not None, **(res or {})}, indent=2))
+    elif res is None:
+        _emit(
+            f"plan: a {args.rate:.3f} pass rate cannot certify >= {args.threshold:.3f} "
+            f"with {args.power:.0%} power within the search limit; raise the rate or lower the bar"
+        )
+    else:
+        _emit(
+            f"plan: run {res['trials']} trials per round ({res['min_passes']}+ passes to clear); a candidate whose true "
+            f"rate is {args.rate:.3f} then passes {res['power_at_trials']:.1%} of the time"
+            + (f" (all {args.rounds} rounds)" if args.rounds > 1 else "")
+            + f".\n      {args.rounds} round(s) = {res['total_trials']} trials. "
+            f"Break-even is only {res['break_even_trials']}. Sizes below {res['stable_trials']} can dip under the target "
+            "again because pass counts are whole numbers."
+        )
+    return 0 if res is not None else 1
+
+
+def _oc(args: argparse.Namespace) -> int:
+    curve = oc_curve(args.trials, args.threshold, None, args.confidence, args.method, args.rounds)
+    if args.json:
+        _emit(json.dumps({"trials": args.trials, "threshold": args.threshold, "rounds": args.rounds, "curve": curve}, indent=2))
+    else:
+        _emit(f"oc: P(gate passes) with {args.trials} trials x {args.rounds} round(s), bar {args.threshold:.3f}")
+        for pt in curve:
+            bar = "#" * int(round(pt["pass_probability"] * 40))
+            _emit(f"  true rate {pt['rate']:.2f}  {pt['pass_probability']:6.1%}  {bar}")
+    return 0
+
+
+def _load_stream(path: str) -> List[bool]:
+    text = _read_text(path)
+    toks: List[Any]
+    stripped = text.strip()
+    if stripped.startswith("["):
+        try:
+            toks = json.loads(stripped)
+        except (json.JSONDecodeError, RecursionError):
+            raise InputError(f"{safe_text(path)}: not valid JSON") from None
+        if not isinstance(toks, list):
+            raise InputError(f"{safe_text(path)}: expected a JSON list")
+    else:
+        toks = [t for t in stripped.replace(",", " ").split() if t]
+    if len(toks) > 5_000_000:
+        raise InputError("too many outcomes")
+    if not toks:
+        raise InputError(f"{safe_text(path)}: no outcomes found")
+    return [_to_bool(t, "outcome", f"{safe_text(path)} #{i}") for i, t in enumerate(toks, start=1)]
+
+
+def load_cases(path: str) -> List[Case]:
+    """CSV/JSON of per-case counts. Columns: case, cand_passes, cand_trials, base_passes, base_trials."""
+    text = _read_text(path)
+    recs: List[Dict[str, Any]]
+    try:
+        if path.lower().endswith(".csv"):
+            recs = [{(k or "").strip().lower(): v for k, v in r.items()} for r in csv.DictReader(text.splitlines())]
+        else:
+            data = json.loads(text)
+            if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
+                raise InputError(f"{safe_text(path)}: expected a JSON list of objects")
+            recs = [{str(k).lower(): v for k, v in r.items()} for r in data]
+    except (json.JSONDecodeError, RecursionError):
+        raise InputError(f"{safe_text(path)} is not valid JSON") from None
+    cases: List[Case] = []
+    seen = set()
+    for i, r in enumerate(recs, start=1):
+        where = f"{safe_text(path)} row {i}"
+        name = str(r.get("case", r.get("name", r.get("item", f"case{i}"))))
+        if name in seen:
+            raise InputError(f"{where}: duplicate case {safe_text(name, 40)!r}")
+        seen.add(name)
+        vals = [_to_int(r.get(k), k, where) for k in ("cand_passes", "cand_trials", "base_passes", "base_trials")]
+        cases.append(Case(name, *vals))
+    if not cases:
+        raise InputError(f"{safe_text(path)}: no cases found")
+    return cases
+
+
+def _paired_data(args: argparse.Namespace) -> List[Tuple[bool, bool]]:
+    path = args.paired if args.cmd == "regress" else args.results
+    if args.baseline_file or args.candidate_arm or args.baseline_arm or args.src != "auto":
+        arms_c = load_arms(path, args.src, args.scorer)
+        if args.baseline_file:
+            cand = pick_arm(arms_c, args.candidate_arm)
+            base = pick_arm(load_arms(args.baseline_file, args.src, args.scorer), args.baseline_arm)
+        else:
+            if not (args.candidate_arm and args.baseline_arm):
+                raise InputError("give both --candidate-arm and --baseline-arm (see 'passgate arms FILE'), or --baseline-file")
+            cand, base = pick_arm(arms_c, args.candidate_arm), pick_arm(arms_c, args.baseline_arm)
+        return pairs_from_arms(cand, base)
+    return load_pairs(path)
+
+
+def _arms(args: argparse.Namespace) -> int:
+    arms = load_arms(args.results, args.src, args.scorer)
+    for name in sorted(arms):
+        items = arms[name]
+        t = sum(v[0] for v in items.values())
+        p = sum(v[1] for v in items.values())
+        _emit(f"arm {safe_text(name, 60)!r}: {len(items)} item(s), {t} trial(s), {p} pass(es)")
+    return 0
+
+
 def _emit(text: str) -> None:
     """Print without ever crashing on a legacy Windows console encoding."""
     try:
@@ -307,8 +489,36 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0 if result.passed else 1
         if args.cmd == "plan":
             return _plan(args)
+        if args.cmd == "oc":
+            return _oc(args)
+        if args.cmd == "arms":
+            return _arms(args)
+        if args.cmd == "sequential":
+            res = run_sequential(_load_stream(args.outcomes), args.threshold, args.alpha, args.max_trials)
+            _render(args, res)
+            return 0 if res.passed else 1
+        if args.cmd == "items":
+            its = load_items(args.results, args.src, args.arm, args.scorer)
+            ir = evaluate_items(its, args.threshold, args.confidence, args.k, args.metric)
+            _render(args, ir)
+            return 0 if ir.passed else 1
+        if args.cmd == "cases":
+            cr = compare_cases(load_cases(args.results), args.alpha, args.adjust)
+            _render(args, cr)
+            return 0 if cr.passed else 1
+        if args.cmd == "regress":
+            if args.paired:
+                if args.candidate or args.baseline:
+                    raise InputError("use either --paired FILE or --candidate/--baseline, not both")
+                ni = non_inferiority_paired(_paired_data(args), args.margin, args.alpha)
+            else:
+                if not args.candidate or not args.baseline:
+                    raise InputError("give --candidate and --baseline (PASSES/TRIALS), or --paired FILE")
+                ni = non_inferiority([parse_ratio(x) for x in args.candidate], [parse_ratio(x) for x in args.baseline], args.margin, args.alpha)
+            _render(args, ni)
+            return 0 if ni.passed else 1
         if args.cmd == "paired":
-            pc = compare_paired(load_pairs(args.results), alpha=args.alpha)
+            pc = compare_paired(_paired_data(args), alpha=args.alpha)
             _render(args, pc)
             return 0 if pc.verdict == "candidate-better" else 1
 

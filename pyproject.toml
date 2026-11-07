@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "passgate"
-version = "0.2.0"
+version = "0.3.0"
 description = "Statistical pass^N gate: require an eval candidate to clear a Wilson-bound bar on every round, not just on average"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -29,8 +29,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# dev only: scipy is a test oracle (scripts/crosscheck_scipy.py), never a runtime dependency
-dev = ["pytest", "ruff", "scipy"]
+# dev only: scipy and statsmodels are test oracles, numpy runs benchmarks/bench_gates.py; none is a runtime dependency
+dev = ["pytest", "ruff", "scipy", "statsmodels", "numpy"]
 
 [project.scripts]
 passgate = "passgate.cli:main"

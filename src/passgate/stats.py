@@ -397,3 +397,52 @@ def mcnemar_exact(cand_only: int, base_only: int) -> Tuple[float, float]:
     if m > EXACT_MAX_TRIALS:
         raise ValueError(f"exact McNemar is limited to {EXACT_MAX_TRIALS:,} discordant items")
     return binom_sf_half(cand_only, m), binom_sf_half(base_only, m)
+
+
+# --- Student t and binomial tail helpers (added in 0.3.0) ---
+
+def binom_sf(k: int, n: int, p: float) -> float:
+    """P(X >= k) for X ~ Binomial(n, p), via the regularized incomplete beta."""
+    if k <= 0:
+        return 1.0
+    if k > n or p <= 0.0:
+        return 0.0
+    if p >= 1.0:
+        return 1.0
+    return betainc(float(k), float(n - k + 1), p)
+
+
+def t_cdf(t: float, df: float) -> float:
+    """Student t cumulative distribution function (df > 0)."""
+    if df <= 0:
+        raise ValueError("df must be positive")
+    if t == 0.0:
+        return 0.5
+    tail = 0.5 * betainc(df / 2.0, 0.5, df / (df + t * t))
+    return 1.0 - tail if t > 0 else tail
+
+
+def t_ppf(q: float, df: float) -> float:
+    """Student t quantile (inverse CDF) by bracketed bisection; df >= 1e6 uses the normal quantile."""
+    if not 0.0 < q < 1.0:
+        raise ValueError("q must be in (0, 1)")
+    if df >= 1e6:
+        return _NORMAL.inv_cdf(q)
+    if q == 0.5:
+        return 0.0
+    if q < 0.5:
+        return -t_ppf(1.0 - q, df)
+    lo, hi = 0.0, 1.0
+    while t_cdf(hi, df) < q:
+        hi *= 2.0
+        if hi > 1e12:
+            break
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if t_cdf(mid, df) < q:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < 1e-13 * max(1.0, hi):
+            break
+    return (lo + hi) / 2.0

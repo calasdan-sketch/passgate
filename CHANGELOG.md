@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+Expert round 2 (statistician, LLM-eval practitioner, CI/DevEx lead, data engineer, skeptical ML engineer, plain-language explainer).
+
+### Added
+- `plan --power P [--rounds N]` and `oc`: power-aware sizing and operating curves. `plan` without `--power` only gave the break-even size, where a good candidate passes about half the time. Exact binomial arithmetic; the returned size is the true minimum (checked one by one up to 20,000 trials), plus the size from which the target holds for every larger size.
+- `regress` / `non_inferiority` / `non_inferiority_paired`: non-inferiority test ("not worse by more than a margin") with Newcombe hybrid-score intervals, independent and paired. Verdicts `superior`, `non-inferior`, `inconclusive`, `inferior`. Matches statsmodels to 1e-12; coverage checked by simulation.
+- `sequential` / `run_sequential` / `pass_boundary` / `anytime_lower`: always-valid mixture likelihood-ratio test and confidence sequence. Controls the false-pass rate over all stopping times; also stops with `fail` when certification is impossible in the budget.
+- `items` / `evaluate_items`: cluster-aware pass rate (design effect, effective sample size, Student-t) and unbiased pass^k / pass@k per item.
+- `cases` / `compare_cases`: per-case one-sided Fisher tests with Holm or Benjamini-Hochberg adjustment (match statsmodels).
+- Ingestion of promptfoo results (`.json`/`.jsonl`), Inspect AI logs (`.json`, `.eval`) and generic CSV/JSON/JSONL; `arms` lists prompts/providers; `paired` accepts `--candidate-arm/--baseline-arm/--baseline-file`. Fails closed on partial credit, several scorers, mismatched items and oversized archives.
+- `--format junit` and `--explain` (plain-English verdict) on the judging commands; `explain()` methods on all results; `action.yml` composite GitHub Action with optional PR comment.
+- `benchmarks/bench_gates.py` with committed `RESULTS.md` / `results.json`: seeded Monte Carlo of false-pass and false-fail rates against naive gates.
+- Student t quantile/CDF and `binom_sf` helpers in `passgate.stats` (tested against SciPy).
+- 69 new tests (134 -> 203), including simulation tests with fixed seeds.
+
+### Changed
+- README: the claim that no multiple-testing correction is applied is clarified (all-rounds is an intersection-union test); comparison table extended and sourced; benchmark numbers added.
+- `safe_text` also escapes lone surrogates (so XML and terminal output stay well-formed).
+- dev extra now includes `statsmodels` and `numpy` (oracle and benchmark only; runtime stays dependency-free).
+
 ## 0.2.0 (unreleased)
 
 ### Fixed after panel review

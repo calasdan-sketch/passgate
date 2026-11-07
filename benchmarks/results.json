@@ -1,0 +1,579 @@
+{
+ "cases": {
+  "alpha": 0.05,
+  "cases": 50,
+  "reps": 4000,
+  "scenarios": {
+   "3 real regressions (0.9 -> 0.5)": {
+    "bh": {
+     "any_false_alarm": 0.00475,
+     "share_of_real_regressions_found": 0.32791666666666663
+    },
+    "holm": {
+     "any_false_alarm": 0.00125,
+     "share_of_real_regressions_found": 0.2538333333333333
+    },
+    "none (raw p < 0.05)": {
+     "any_false_alarm": 0.33925,
+     "share_of_real_regressions_found": 0.8361666666666665
+    }
+   },
+   "no true regression": {
+    "bh": {
+     "any_false_alarm": 0.001,
+     "share_of_real_regressions_found": 0.0
+    },
+    "holm": {
+     "any_false_alarm": 0.001,
+     "share_of_real_regressions_found": 0.0
+    },
+    "none (raw p < 0.05)": {
+     "any_false_alarm": 0.34,
+     "share_of_real_regressions_found": 0.0
+    }
+   }
+  },
+  "trials_per_arm": 20
+ },
+ "cluster": {
+  "reps": 4000,
+  "rows": [
+   {
+    "cluster_aware_pass": 0.0005,
+    "icc": 0.05,
+    "items": 10,
+    "naive_pooled_wilson_pass": 0.00325,
+    "trials_per_item": 10,
+    "true_rate": 0.74
+   },
+   {
+    "cluster_aware_pass": 0.01125,
+    "icc": 0.05,
+    "items": 10,
+    "naive_pooled_wilson_pass": 0.054,
+    "trials_per_item": 10,
+    "true_rate": 0.8
+   },
+   {
+    "cluster_aware_pass": 0.42525,
+    "icc": 0.05,
+    "items": 10,
+    "naive_pooled_wilson_pass": 0.751,
+    "trials_per_item": 10,
+    "true_rate": 0.9
+   },
+   {
+    "cluster_aware_pass": 0.00875,
+    "icc": 0.3,
+    "items": 10,
+    "naive_pooled_wilson_pass": 0.047,
+    "trials_per_item": 10,
+    "true_rate": 0.74
+   },
+   {
+    "cluster_aware_pass": 0.045,
+    "icc": 0.3,
+    "items": 10,
+    "naive_pooled_wilson_pass": 0.175,
+    "trials_per_item": 10,
+    "true_rate": 0.8
+   },
+   {
+    "cluster_aware_pass": 0.2855,
+    "icc": 0.3,
+    "items": 10,
+    "naive_pooled_wilson_pass": 0.71,
+    "trials_per_item": 10,
+    "true_rate": 0.9
+   },
+   {
+    "cluster_aware_pass": 0.00025,
+    "icc": 0.05,
+    "items": 30,
+    "naive_pooled_wilson_pass": 0.00025,
+    "trials_per_item": 10,
+    "true_rate": 0.74
+   },
+   {
+    "cluster_aware_pass": 0.02325,
+    "icc": 0.05,
+    "items": 30,
+    "naive_pooled_wilson_pass": 0.052,
+    "trials_per_item": 10,
+    "true_rate": 0.8
+   },
+   {
+    "cluster_aware_pass": 0.96425,
+    "icc": 0.05,
+    "items": 30,
+    "naive_pooled_wilson_pass": 0.99375,
+    "trials_per_item": 10,
+    "true_rate": 0.9
+   },
+   {
+    "cluster_aware_pass": 0.00025,
+    "icc": 0.3,
+    "items": 30,
+    "naive_pooled_wilson_pass": 0.008,
+    "trials_per_item": 10,
+    "true_rate": 0.74
+   },
+   {
+    "cluster_aware_pass": 0.03125,
+    "icc": 0.3,
+    "items": 30,
+    "naive_pooled_wilson_pass": 0.1635,
+    "trials_per_item": 10,
+    "true_rate": 0.8
+   },
+   {
+    "cluster_aware_pass": 0.62,
+    "icc": 0.3,
+    "items": 30,
+    "naive_pooled_wilson_pass": 0.93875,
+    "trials_per_item": 10,
+    "true_rate": 0.9
+   },
+   {
+    "cluster_aware_pass": 0.0,
+    "icc": 0.05,
+    "items": 100,
+    "naive_pooled_wilson_pass": 0.0,
+    "trials_per_item": 10,
+    "true_rate": 0.74
+   },
+   {
+    "cluster_aware_pass": 0.0235,
+    "icc": 0.05,
+    "items": 100,
+    "naive_pooled_wilson_pass": 0.056,
+    "trials_per_item": 10,
+    "true_rate": 0.8
+   },
+   {
+    "cluster_aware_pass": 1.0,
+    "icc": 0.05,
+    "items": 100,
+    "naive_pooled_wilson_pass": 1.0,
+    "trials_per_item": 10,
+    "true_rate": 0.9
+   },
+   {
+    "cluster_aware_pass": 0.0,
+    "icc": 0.3,
+    "items": 100,
+    "naive_pooled_wilson_pass": 0.00025,
+    "trials_per_item": 10,
+    "true_rate": 0.74
+   },
+   {
+    "cluster_aware_pass": 0.02325,
+    "icc": 0.3,
+    "items": 100,
+    "naive_pooled_wilson_pass": 0.1545,
+    "trials_per_item": 10,
+    "true_rate": 0.8
+   },
+   {
+    "cluster_aware_pass": 0.994,
+    "icc": 0.3,
+    "items": 100,
+    "naive_pooled_wilson_pass": 1.0,
+    "trials_per_item": 10,
+    "true_rate": 0.9
+   }
+  ],
+  "threshold": 0.8
+ },
+ "fixed": {
+  "planned_n": 327,
+  "reps": 20000,
+  "rounds": 3,
+  "rows": [
+   {
+    "exact_wilson_pass_probability": 0.0,
+    "n_per_round": 30,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.1111,
+     "naive: one run, rate >= bar": 0.3176,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.85
+   },
+   {
+    "exact_wilson_pass_probability": 0.0,
+    "n_per_round": 30,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.4705,
+     "naive: one run, rate >= bar": 0.57945,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.89
+   },
+   {
+    "exact_wilson_pass_probability": 0.0,
+    "n_per_round": 30,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.98605,
+     "naive: one run, rate >= bar": 0.93645,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.95
+   },
+   {
+    "exact_wilson_pass_probability": 0.0,
+    "n_per_round": 30,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.99955,
+     "naive: one run, rate >= bar": 0.98855,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.97
+   },
+   {
+    "exact_wilson_pass_probability": 7.70443863539331e-11,
+    "n_per_round": 100,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.0081,
+     "naive: one run, rate >= bar": 0.0985,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.85
+   },
+   {
+    "exact_wilson_pass_probability": 1.4726934917854629e-06,
+    "n_per_round": 100,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.33155,
+     "naive: one run, rate >= bar": 0.4578,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.89
+   },
+   {
+    "exact_wilson_pass_probability": 0.08287119246279614,
+    "n_per_round": 100,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.9998,
+     "naive: one run, rate >= bar": 0.98905,
+     "passgate exact (every round)": 0.08545,
+     "passgate wilson (every round)": 0.08545
+    },
+    "true_rate": 0.95
+   },
+   {
+    "exact_wilson_pass_probability": 0.5470520255120503,
+    "n_per_round": 100,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 1.0,
+     "naive: one run, rate >= bar": 0.9997,
+     "passgate exact (every round)": 0.54095,
+     "passgate wilson (every round)": 0.54095
+    },
+    "true_rate": 0.97
+   },
+   {
+    "exact_wilson_pass_probability": 2.0955231136233696e-17,
+    "n_per_round": 300,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 5e-05,
+     "naive: one run, rate >= bar": 0.008,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.85
+   },
+   {
+    "exact_wilson_pass_probability": 6.643046722750468e-08,
+    "n_per_round": 300,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.17955,
+     "naive: one run, rate >= bar": 0.3239,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.89
+   },
+   {
+    "exact_wilson_pass_probability": 0.6836887347544501,
+    "n_per_round": 300,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 1.0,
+     "naive: one run, rate >= bar": 0.99985,
+     "passgate exact (every round)": 0.68615,
+     "passgate wilson (every round)": 0.68615
+    },
+    "true_rate": 0.95
+   },
+   {
+    "exact_wilson_pass_probability": 0.9974160575328033,
+    "n_per_round": 300,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 1.0,
+     "naive: one run, rate >= bar": 1.0,
+     "passgate exact (every round)": 0.99735,
+     "passgate wilson (every round)": 0.99735
+    },
+    "true_rate": 0.97
+   },
+   {
+    "exact_wilson_pass_probability": 3.647044503911205e-17,
+    "n_per_round": 327,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.0,
+     "naive: one run, rate >= bar": 0.00415,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.85
+   },
+   {
+    "exact_wilson_pass_probability": 2.151135791951335e-07,
+    "n_per_round": 327,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 0.17235,
+     "naive: one run, rate >= bar": 0.277,
+     "passgate exact (every round)": 0.0,
+     "passgate wilson (every round)": 0.0
+    },
+    "true_rate": 0.89
+   },
+   {
+    "exact_wilson_pass_probability": 0.8180230957092616,
+    "n_per_round": 327,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 1.0,
+     "naive: one run, rate >= bar": 0.99985,
+     "passgate exact (every round)": 0.72575,
+     "passgate wilson (every round)": 0.81415
+    },
+    "true_rate": 0.95
+   },
+   {
+    "exact_wilson_pass_probability": 0.9994792679041555,
+    "n_per_round": 327,
+    "pass_rate": {
+     "naive: mean of 3 rounds >= bar": 1.0,
+     "naive: one run, rate >= bar": 1.0,
+     "passgate exact (every round)": 0.9992,
+     "passgate wilson (every round)": 0.9995
+    },
+    "true_rate": 0.97
+   }
+  ],
+  "threshold": 0.9
+ },
+ "numpy": "2.5.4",
+ "python": "3.13.18",
+ "regress": {
+  "coverage_nominal_0.90": [
+   {
+    "coverage": 0.911,
+    "design": "independent",
+    "n": 30,
+    "p1": 0.9,
+    "p2": 0.9
+   },
+   {
+    "coverage": 0.9076666666666666,
+    "design": "independent",
+    "n": 30,
+    "p1": 0.8,
+    "p2": 0.7
+   },
+   {
+    "coverage": 0.9263333333333333,
+    "design": "independent",
+    "n": 30,
+    "p1": 0.97,
+    "p2": 0.9
+   },
+   {
+    "coverage": 0.9666666666666667,
+    "design": "paired",
+    "n": 30,
+    "p_base_only": 0.05,
+    "p_both": 0.8,
+    "p_cand_only": 0.05
+   },
+   {
+    "coverage": 0.9446666666666667,
+    "design": "paired",
+    "n": 30,
+    "p_base_only": 0.02,
+    "p_both": 0.85,
+    "p_cand_only": 0.1
+   },
+   {
+    "coverage": 0.9186666666666666,
+    "design": "paired",
+    "n": 30,
+    "p_base_only": 0.1,
+    "p_both": 0.6,
+    "p_cand_only": 0.15
+   },
+   {
+    "coverage": 0.9006666666666666,
+    "design": "independent",
+    "n": 100,
+    "p1": 0.9,
+    "p2": 0.9
+   },
+   {
+    "coverage": 0.8936666666666667,
+    "design": "independent",
+    "n": 100,
+    "p1": 0.8,
+    "p2": 0.7
+   },
+   {
+    "coverage": 0.918,
+    "design": "independent",
+    "n": 100,
+    "p1": 0.97,
+    "p2": 0.9
+   },
+   {
+    "coverage": 0.92,
+    "design": "paired",
+    "n": 100,
+    "p_base_only": 0.05,
+    "p_both": 0.8,
+    "p_cand_only": 0.05
+   },
+   {
+    "coverage": 0.916,
+    "design": "paired",
+    "n": 100,
+    "p_base_only": 0.02,
+    "p_both": 0.85,
+    "p_cand_only": 0.1
+   },
+   {
+    "coverage": 0.9053333333333333,
+    "design": "paired",
+    "n": 100,
+    "p_base_only": 0.1,
+    "p_both": 0.6,
+    "p_cand_only": 0.15
+   },
+   {
+    "coverage": 0.9056666666666666,
+    "design": "independent",
+    "n": 400,
+    "p1": 0.9,
+    "p2": 0.9
+   },
+   {
+    "coverage": 0.8936666666666667,
+    "design": "independent",
+    "n": 400,
+    "p1": 0.8,
+    "p2": 0.7
+   },
+   {
+    "coverage": 0.8963333333333333,
+    "design": "independent",
+    "n": 400,
+    "p1": 0.97,
+    "p2": 0.9
+   },
+   {
+    "coverage": 0.9153333333333333,
+    "design": "paired",
+    "n": 400,
+    "p_base_only": 0.05,
+    "p_both": 0.8,
+    "p_cand_only": 0.05
+   },
+   {
+    "coverage": 0.9136666666666666,
+    "design": "paired",
+    "n": 400,
+    "p_base_only": 0.02,
+    "p_both": 0.85,
+    "p_cand_only": 0.1
+   },
+   {
+    "coverage": 0.9036666666666666,
+    "design": "paired",
+    "n": 400,
+    "p_base_only": 0.1,
+    "p_both": 0.6,
+    "p_cand_only": 0.15
+   }
+  ],
+  "margin": 0.05,
+  "n_per_arm": 200,
+  "reps": 6000,
+  "rows": [
+   {
+    "naive_point_estimate_rule": 0.9615,
+    "regress_non_inferiority": 0.502,
+    "superiority_compare": 0.05383333333333333,
+    "true_diff": 0.0
+   },
+   {
+    "naive_point_estimate_rule": 0.7608333333333334,
+    "regress_non_inferiority": 0.14833333333333334,
+    "superiority_compare": 0.004666666666666667,
+    "true_diff": -0.03
+   },
+   {
+    "naive_point_estimate_rule": 0.522,
+    "regress_non_inferiority": 0.048666666666666664,
+    "superiority_compare": 0.0015,
+    "true_diff": -0.05
+   },
+   {
+    "naive_point_estimate_rule": 0.21333333333333335,
+    "regress_non_inferiority": 0.0045,
+    "superiority_compare": 0.0,
+    "true_diff": -0.08
+   }
+  ]
+ },
+ "seed": 20261107,
+ "sequential": {
+  "alpha": 0.025,
+  "max_trials": 500,
+  "reps": 20000,
+  "rows": [
+   {
+    "anytime_mean_trials": 257.252,
+    "anytime_sequential": 0.0037,
+    "fixed_wilson_at_500": 0.00045,
+    "naive_peeking_wilson": 0.03295,
+    "true_rate": 0.88
+   },
+   {
+    "anytime_mean_trials": 306.19325,
+    "anytime_sequential": 0.0151,
+    "fixed_wilson_at_500": 0.0194,
+    "naive_peeking_wilson": 0.13715,
+    "true_rate": 0.9
+   },
+   {
+    "anytime_mean_trials": 239.6443,
+    "anytime_sequential": 0.9154,
+    "fixed_wilson_at_500": 0.98775,
+    "naive_peeking_wilson": 0.9955,
+    "true_rate": 0.95
+   },
+   {
+    "anytime_mean_trials": 117.8252,
+    "anytime_sequential": 0.99975,
+    "fixed_wilson_at_500": 1.0,
+    "naive_peeking_wilson": 1.0,
+    "true_rate": 0.97
+   }
+  ],
+  "threshold": 0.9
+ }
+}

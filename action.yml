@@ -1,0 +1,50 @@
+name: passgate
+description: Statistical pass^N gate for LLM evals. Fails the job when the evidence does not support shipping.
+inputs:
+  command:
+    description: "passgate command: gate, items, regress, paired, compare, cases, sequential"
+    required: true
+    default: gate
+  args:
+    description: "Arguments after the command, e.g. 'rounds.json --threshold 0.9 --min-rounds 3'"
+    required: true
+  comment:
+    description: "'true' posts (and updates) the plain-English verdict as a pull request comment. Needs pull-requests: write; skipped for forks."
+    default: "false"
+  python-version:
+    description: Python version to run passgate with
+    default: "3.12"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install passgate from this action's checkout
+      shell: bash
+      run: python -m pip install "${{ github.action_path }}"
+    - name: Run the gate
+      shell: bash
+      env:
+        PG_COMMAND: ${{ inputs.command }}
+        PG_ARGS: ${{ inputs.args }}
+        PG_COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      run: |
+        set -f  # no glob expansion of the arguments
+        report="$RUNNER_TEMP/passgate-report.md"
+        set +e
+        # inputs come through env vars, never interpolated into the script text
+        passgate "$PG_COMMAND" $PG_ARGS --format markdown --explain > "$report"
+        code=$?
+        set -e
+        if [ -s "$report" ]; then
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PG_COMMENT" = "true" ] && [ -n "$PR_NUMBER" ] && [ "$SAME_REPO" = "true" ]; then
+            gh pr comment "$PR_NUMBER" --body-file "$report" --edit-last --create-if-none || echo "could not post the PR comment"
+          fi
+        fi
+        cat "$report"
+        exit "$code"

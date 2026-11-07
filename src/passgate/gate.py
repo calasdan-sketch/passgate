@@ -157,6 +157,35 @@ class GateResult:
         verdict = "PASS" if self.passed else "FAIL"
         return "\n".join([head] + lines + [f"verdict: {verdict}"])
 
+    def explain(self) -> str:
+        """Plain-English verdict for people who do not read confidence intervals."""
+        n = len(self.rounds)
+        bar = f"{self.threshold:.0%}" if abs(self.threshold * 100 - round(self.threshold * 100)) < 1e-9 else f"{self.threshold:.1%}"
+        if n == 0:
+            return "There were no test rounds, so nothing can be vouched for. That is a failure by design."
+        if self.passed:
+            return (
+                f"All {n} round(s) show, with {self.confidence:.0%} confidence, that the true success rate is at least "
+                f"{bar}. Each round was judged on its own pessimistic estimate, not on the average, so one lucky round "
+                "cannot carry the others."
+            )
+        parts = []
+        if n < self.min_rounds:
+            parts.append(f"Only {n} round(s) were run but {self.min_rounds} are required.")
+        bad = [(i, r) for i, r in enumerate(self.rounds) if not r.meets]
+        if bad:
+            i, r = bad[0]
+            parts.append(
+                f"{len(bad)} of {n} round(s) could not prove a success rate of {bar}. The weakest evidence is "
+                f"{safe_text(self._name(i, r), 40)!r}: it passed {r.round.passes} of {r.round.trials} "
+                f"({r.round.rate:.1%}), but allowing for luck the true rate could be as low as {r.lower:.1%}. "
+            )
+            if r.needed:
+                parts[-1] += f"At the same pass rate, about {r.needed[0]} trials would be enough."
+            elif not r.hint_skipped:
+                parts[-1] += "At this pass rate, no number of trials can prove it; the candidate itself needs to improve."
+        return " ".join(parts)
+
     def to_markdown(self) -> str:
         """GitHub-flavoured Markdown report (e.g. for $GITHUB_STEP_SUMMARY or a PR comment)."""
         name = _METHOD_NAME[self.method]
@@ -292,6 +321,18 @@ class Comparison:
             f"{self._fisher_text()}, test: {self.test}, verdict: {self.verdict}"
         )
 
+    def explain(self) -> str:
+        gap = (self.candidate_rate - self.baseline_rate) * 100
+        base = f"The candidate passes {self.candidate_rate:.1%} and the baseline {self.baseline_rate:.1%} ({gap:+.1f} points)."
+        if self.verdict == "candidate-better":
+            return base + " The gap is too big to be luck at your chosen error rate: the candidate is genuinely better."
+        if self.verdict == "baseline-better":
+            return base + " The baseline is genuinely better; the candidate got worse."
+        return (
+            base + " That gap is within what luck alone could produce with this many trials, so nothing is proven. "
+            "Note this is a test for 'better'; to check 'not worse', use the regress command."
+        )
+
     def to_markdown(self) -> str:
         return (
             f"### passgate compare: {self.verdict}\n\n"
@@ -405,6 +446,17 @@ class PairedComparison:
             f"{self.baseline_rate:.3f} - fixed {self.candidate_only}, broke {self.baseline_only}, "
             f"exact McNemar one-sided p={self.p_one_sided:.4g}, verdict: {self.verdict}"
         )
+
+    def explain(self) -> str:
+        base = (
+            f"On the same {self.n} items, the candidate fixed {self.candidate_only} that the baseline failed and "
+            f"broke {self.baseline_only} that the baseline passed."
+        )
+        if self.verdict == "candidate-better":
+            return base + " That imbalance is too lopsided to be luck: the candidate is genuinely better."
+        if self.verdict == "baseline-better":
+            return base + " That imbalance is too lopsided to be luck: the candidate is genuinely worse."
+        return base + " That is within what luck produces when only the changed items matter, so nothing is proven."
 
     def to_markdown(self) -> str:
         return (
