@@ -169,7 +169,7 @@ It also stops with `fail` as soon as certification is impossible within `--max-t
 
 ### items: when each test item is tried several times
 
-50 items sampled 10 times are not 500 independent coin flips. `items` treats the item as the unit: a cluster-robust standard error gives a design effect, and the Wilson bound is evaluated at the effective sample size with a Student-t critical value. It never reports a bound looser than plain Wilson. With `--k 3` it reports unbiased **pass^k** (all of k tries succeed, tau-bench) or `--metric pass@k` per item, with a t-interval over items (approximate).
+50 items sampled 10 times are not 500 independent coin flips. `items` treats the item as the unit: a cluster-robust standard error gives a design effect, and the Wilson bound is evaluated at the effective sample size with a Student-t critical value. For `--k 1` it never reports a bound less cautious than plain Wilson. With `--k 3` it reports unbiased **pass^k** (all of k tries succeed, tau-bench) or `--metric pass@k` per item, with a Wilson interval over the per-item values at an effective sample size taken from their spread (approximate; never narrower than one observation per item).
 
 ```bash
 passgate items results.json --threshold 0.8 --explain         # promptfoo, Inspect, CSV or JSONL
@@ -283,7 +283,7 @@ The honest cost: passgate is strict. With few trials it blocks good candidates (
 ## Honest limits
 
 - The Wilson and Clopper-Pearson intervals are two-sided, so a 95% interval gives a one-sided 97.5% lower bound per round. Requiring every round to clear is an intersection-union test, which needs no multiple-testing correction for the claim "every round is above the bar". Searching many *cases* for a regression is a different question; use `cases` for that.
-- `gate` treats trials in a round as independent. If rounds reuse the same test items, or items are tried several times, the real uncertainty is larger than the bound shows. Use `items` for repeated trials; see [Miller 2024, "Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640). The `items` bound uses an estimated design effect, so it is itself approximate with few items (under about 20) and the pass^k interval is a t-interval over per-item estimates, not exact.
+- `gate` treats trials in a round as independent. If rounds reuse the same test items, or items are tried several times, the real uncertainty is larger than the bound shows. Use `items` for repeated trials; see [Miller 2024, "Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640). The `items` bound uses an estimated design effect, so it is itself approximate with few items (under about 20) and the pass^k / pass@k interval is a Wilson interval over per-item estimates at an effective sample size taken from their spread, not exact. Simulated coverage of its lower end is at or above nominal in the cases tried ([`benchmarks/RESULTS-items-k.md`](benchmarks/RESULTS-items-k.md)); the round-4 t-interval fell short (87% to 95% against 97.5%) and could report a perfect bound from items that all scored the same.
 - `sequential` and `regress` need real sample sizes. Tiny streams never certify, and equal prompts pass `regress` only about half the time at 200 trials per arm and a 5-point margin. `plan-regress` sizes the independent-samples design only (not the paired one) and stops at 20,000 trials per arm.
 - Files are read whole: the cap is 256 MiB, a CSV cell may be 1 MiB, and about a million rows take around ten seconds to parse. Parsing speed was measured on one shared machine, not benchmarked.
 - Windows: nothing in passgate has been run on Windows. CI is set up to run the tests and a fresh-venv wheel smoke test on `windows-latest`, but that workflow has not run on GitHub yet. What was checked by reading the code: no `shell=True`, no signals, no file replacement, files opened in binary and decoded as UTF-8 or UTF-16 (BOM) so a PowerShell 5 redirect works; CRLF, BOM and `;`-separated CSV are tested; console encodings that cannot show a character (cp1252, ASCII) were simulated on Linux and print `\xe9` or `\u65e5` instead of failing; file patterns such as `runs\*.json` are expanded by passgate itself. Labels from `--per-trial` use the OS's own basename rule, which is untested on Windows.
@@ -298,4 +298,4 @@ The honest cost: passgate is strict. With few trials it blocks good candidates (
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. Copyright (c) 2026 Calas Automations Inc. See `LICENSE`.

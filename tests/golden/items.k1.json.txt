@@ -1,0 +1,30 @@
+{
+  "passgate_version": "X.Y.Z",
+  "passed": false,
+  "metric": "pass-rate",
+  "k": 1,
+  "items": 4,
+  "trials": 40,
+  "passes": 35,
+  "estimate": 0.875,
+  "lower": 0.424789,
+  "upper": 0.985152,
+  "naive_pooled_wilson_lower": 0.738879,
+  "design_effect": 3.2762,
+  "threshold": 0.8,
+  "confidence": 0.95,
+  "skipped_items": 0,
+  "weakest_items": [
+    {
+      "item": "gamma",
+      "passes": 6,
+      "trials": 10
+    },
+    {
+      "item": "beta",
+      "passes": 9,
+      "trials": 10
+    }
+  ],
+  "explanation": "Across 4 test items the pass rate is 87.5%. Because tries on the same item are alike, they carry less information than the same number of independent tries (design effect 3.3). Allowing for that, we are 95% sure the true value is at least 42.5%, short of your bar of 80%."
+}

@@ -42,18 +42,46 @@ class Item:
             raise ValueError(f"passes {self.passes} outside [0, {self.trials}]")
 
 
-def pass_hat_k(trials: int, passes: int, k: int) -> float:
-    """Unbiased estimate that k independent tries ALL pass, from ``passes`` of ``trials`` (pass^k)."""
+def _check_k(trials: int, passes: int, k: int) -> None:
     if k < 1 or trials < k:
         raise ValueError("need trials >= k >= 1")
-    return math.comb(passes, k) / math.comb(trials, k)
+    if not 0 <= passes <= trials:
+        raise ValueError(f"passes {passes} outside [0, {trials}]")
+
+
+def pass_hat_k(trials: int, passes: int, k: int) -> float:
+    """Unbiased estimate that k independent tries ALL pass, from ``passes`` of ``trials`` (pass^k).
+
+    Equal to C(passes,k)/C(trials,k), computed as a running product so a huge trial count with a big k
+    costs O(k) float steps instead of building enormous integers.
+    """
+    _check_k(trials, passes, k)
+    if passes < k:
+        return 0.0
+    out = 1.0
+    for i in range(k):
+        out *= (passes - i) / (trials - i)
+        if out == 0.0:
+            break
+    return out
 
 
 def pass_at_k(trials: int, passes: int, k: int) -> float:
-    """Unbiased estimate that at least one of k tries passes (pass@k, Chen et al. 2021)."""
-    if k < 1 or trials < k:
-        raise ValueError("need trials >= k >= 1")
-    return 1.0 - math.comb(trials - passes, k) / math.comb(trials, k)
+    """Unbiased estimate that at least one of k tries passes (pass@k, Chen et al. 2021).
+
+    Equal to 1 - C(trials-passes,k)/C(trials,k). Evaluated as ``-expm1(sum(log1p(...)))`` so a tiny
+    answer keeps its digits instead of being lost in ``1 - 0.999999999``.
+    """
+    _check_k(trials, passes, k)
+    fails = trials - passes
+    if fails < k:
+        return 1.0
+    if passes == 0:
+        return 0.0
+    total = 0.0
+    for i in range(k):
+        total += math.log1p(-passes / (trials - i))
+    return min(1.0, max(0.0, -math.expm1(total)))
 
 
 @dataclass
@@ -105,7 +133,7 @@ class ItemsResult:
             f"  design effect {self.deff:.2f} (1.00 = trials independent); a plain pooled Wilson bound would "
             f"claim {self.naive_lower:.3f}"
             if self.k == 1
-            else f"  per-item unbiased {self.metric} estimates (k={self.k}), Student-t interval over items",
+            else f"  per-item unbiased {self.metric} estimates (k={self.k}), Wilson interval over items at an effective sample size",
         ]
         if self.skipped_items:
             lines.append(f"  {self.skipped_items} item(s) with fewer than k={self.k} trials were left out")
@@ -177,14 +205,26 @@ def cluster_wilson(items: Sequence[Item], confidence: float = 0.95) -> Tuple[flo
     return p, lo, hi, m_tot / n_eff, naive_lower
 
 
-def _mean_t_interval(vals: Sequence[float], confidence: float) -> Tuple[float, float, float]:
+def _mean_t_interval(vals: Sequence[float], confidence: float, max_neff: float) -> Tuple[float, float, float]:
+    """Interval for the mean of per-item values in [0, 1].
+
+    A plain Student-t interval collapses to zero width when every item has the same value (three items
+    that all pass 10 of 10 would "prove" pass^2 = 1.000). So, like the k = 1 path, the interval is
+    Wilson's evaluated at an effective sample size taken from the spread of the item values, never fewer
+    than one observation per item and never more than ``max_neff`` (the usable trials).
+    """
     g = len(vals)
     mean = sum(vals) / g
     if g < 2:
         return mean, 0.0, 1.0
-    sd = math.sqrt(sum((v - mean) ** 2 for v in vals) / (g - 1))
-    half = _crit(confidence, g - 1) * sd / math.sqrt(g)
-    return mean, max(0.0, mean - half), min(1.0, mean + half)
+    var_of_mean = sum((v - mean) ** 2 for v in vals) / (g - 1) / g
+    if var_of_mean > 0.0 and 0.0 < mean < 1.0:
+        n_eff = mean * (1.0 - mean) / var_of_mean
+    else:
+        n_eff = float(g)
+    n_eff = min(max_neff, max(float(g), n_eff))
+    lo, hi = _wilson(mean, n_eff, _crit(confidence, g - 1))
+    return mean, lo, hi
 
 
 def evaluate_items(
@@ -196,8 +236,8 @@ def evaluate_items(
 ) -> ItemsResult:
     """Gate on an item-clustered pass rate (k = 1) or on pass^k / pass@k (k >= 2).
 
-    For ``k == 1`` the bound is the cluster-aware Wilson interval. For ``k >= 2`` it is a Student-t
-    interval over per-item unbiased estimates (approximate; items with fewer than k trials are left out
+    For ``k == 1`` the bound is the cluster-aware Wilson interval. For ``k >= 2`` it is a Wilson interval, with a
+    Student-t critical value, over per-item unbiased estimates (approximate; items with fewer than k trials are left out
     and counted). Fails closed: zero usable items raises ``ValueError``.
     """
     if not 0.0 < threshold < 1.0:
@@ -223,7 +263,7 @@ def evaluate_items(
         raise ValueError(f"no item has at least k={k} trials")
     fn = pass_hat_k if metric == "pass^k" else pass_at_k
     vals = [fn(i.trials, i.passes, k) for i in usable]
-    est, lo, hi = _mean_t_interval(vals, confidence)
+    est, lo, hi = _mean_t_interval(vals, confidence, float(sum(i.trials for i in usable)))
     naive = _wilson(est, sum(i.trials for i in usable), z_for_confidence(confidence))[0]
     return ItemsResult(
         len(usable), sum(i.trials for i in usable), sum(i.passes for i in usable), metric, k, est, lo, hi,

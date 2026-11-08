@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="passgate ItemsResult" tests="1" failures="1" errors="0">
+    <testcase classname="passgate" name="verdict">
+      <failure message="items: pass-rate = 0.875 over 4 item(s), 40 trial(s); 95% cluster-aware lower bound 0.425 vs bar 0.800\x0a  design effect 3.28 (1.00 = trials independent); a plain pooled Wilson bound would claim 0.739\x0a  weakest: gamma 6/10\x0a  weakest: beta 9/10\x0averdict: FAIL">items: pass-rate = 0.875 over 4 item(s), 40 trial(s); 95% cluster-aware lower bound 0.425 vs bar 0.800\x0a  design effect 3.28 (1.00 = trials independent); a plain pooled Wilson bound would claim 0.739\x0a  weakest: gamma 6/10\x0a  weakest: beta 9/10\x0averdict: FAIL</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

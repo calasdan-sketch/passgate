@@ -1,0 +1,6 @@
+items: pass-rate = 0.875 over 4 item(s), 40 trial(s); 95% cluster-aware lower bound 0.425 vs bar 0.800
+  design effect 3.28 (1.00 = trials independent); a plain pooled Wilson bound would claim 0.739
+  weakest: gamma 6/10
+  weakest: beta 9/10
+verdict: FAIL
+In plain words: Across 4 test items the pass rate is 87.5%. Because tries on the same item are alike, they carry less information than the same number of independent tries (design effect 3.3). Allowing for that, we are 95% sure the true value is at least 42.5%, short of your bar of 80%.

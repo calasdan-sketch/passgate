@@ -11,7 +11,7 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import __version__
+from . import __author__, __version__
 from .cluster import evaluate_items
 from .gate import Round, compare, compare_paired, evaluate_rounds
 from .ingest import (
@@ -210,7 +210,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "New here? Run 'passgate example rounds -o rounds.json' and then 'passgate gate rounds.json'."
         ),
     )
-    ap.add_argument("--version", action="version", version=f"passgate {__version__}")
+    ap.add_argument("--version", action="version", version=f"passgate {__version__} ({__author__}, MIT licence)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     g = sub.add_parser("gate", help="pass^N gate over eval rounds; exit 1 if any round is weak")

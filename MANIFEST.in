@@ -4,3 +4,4 @@ recursive-include benchmarks *.py *.md *.json
 recursive-include scripts *.py
 recursive-include tests *.py
 global-exclude __pycache__ *.py[cod]
+recursive-include tests/golden *.txt

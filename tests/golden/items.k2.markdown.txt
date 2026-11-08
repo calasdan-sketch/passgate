@@ -1,0 +1,7 @@
+### passgate items: FAIL
+
+| metric | items | trials | estimate | lower bound | bar | design effect | naive lower |
+|---|---|---|---|---|---|---|---|
+| pass\^k | 4 | 40 | 0.783 | 0.254 | 0.8 | 1.00 | 0.634 |
+
+Across 4 test items the chance that all 2 tries in a row succeed is 78.3%. Because tries on the same item are alike, they carry less information than the same number of independent tries (design effect 1.0). Allowing for that, we are 95% sure the true value is at least 25.4%, short of your bar of 80%.

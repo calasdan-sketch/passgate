@@ -34,6 +34,7 @@ from .stats import (
 )
 
 __version__ = "0.3.0"
+__author__ = "Calas Automations Inc."
 __all__ = [
     "Item",
     "ItemsResult",

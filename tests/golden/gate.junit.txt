@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="passgate gate" tests="2" failures="1" errors="0">
+    <testcase classname="passgate" name="r1" />
+    <testcase classname="passgate" name="r2">
+      <failure message="93/100, lower bound 0.863 &lt; 0.9; needs 398 trials at this rate (370+ passes)">93/100, lower bound 0.863 &lt; 0.9; needs 398 trials at this rate (370+ passes)</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

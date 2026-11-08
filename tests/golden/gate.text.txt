@@ -1,0 +1,5 @@
+passgate: 1/2 round(s) clear Wilson-lower >= 0.900 (95% confidence, min 2 rounds)
+  PASS           r1: 97/100 = 0.970 (lower 0.915)
+  FAIL           r2: 93/100 = 0.930 (lower 0.863) - needs 398 trials at this rate (370+ passes)
+verdict: FAIL
+In plain words: 1 of 2 round(s) could not prove a success rate of 90%. The weakest evidence is 'r2': it passed 93 of 100 (93.0%), but allowing for luck the true rate could be as low as 86.3%. At the same pass rate, about 398 trials would be enough.

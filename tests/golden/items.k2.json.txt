@@ -1,0 +1,30 @@
+{
+  "passgate_version": "X.Y.Z",
+  "passed": false,
+  "metric": "pass^k",
+  "k": 2,
+  "items": 4,
+  "trials": 40,
+  "passes": 35,
+  "estimate": 0.783333,
+  "lower": 0.254367,
+  "upper": 0.974565,
+  "naive_pooled_wilson_lower": 0.634058,
+  "design_effect": 1.0,
+  "threshold": 0.8,
+  "confidence": 0.95,
+  "skipped_items": 0,
+  "weakest_items": [
+    {
+      "item": "gamma",
+      "passes": 6,
+      "trials": 10
+    },
+    {
+      "item": "beta",
+      "passes": 9,
+      "trials": 10
+    }
+  ],
+  "explanation": "Across 4 test items the chance that all 2 tries in a row succeed is 78.3%. Because tries on the same item are alike, they carry less information than the same number of independent tries (design effect 1.0). Allowing for that, we are 95% sure the true value is at least 25.4%, short of your bar of 80%."
+}

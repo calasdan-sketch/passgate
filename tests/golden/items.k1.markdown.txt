@@ -1,0 +1,7 @@
+### passgate items: FAIL
+
+| metric | items | trials | estimate | lower bound | bar | design effect | naive lower |
+|---|---|---|---|---|---|---|---|
+| pass\-rate | 4 | 40 | 0.875 | 0.425 | 0.8 | 3.28 | 0.739 |
+
+Across 4 test items the pass rate is 87.5%. Because tries on the same item are alike, they carry less information than the same number of independent tries (design effect 3.3). Allowing for that, we are 95% sure the true value is at least 42.5%, short of your bar of 80%.

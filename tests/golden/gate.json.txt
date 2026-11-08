@@ -1,0 +1,33 @@
+{
+  "passgate_version": "X.Y.Z",
+  "passed": false,
+  "threshold": 0.9,
+  "confidence": 0.95,
+  "method": "wilson",
+  "min_rounds": 2,
+  "rounds": [
+    {
+      "label": "r1",
+      "trials": 100,
+      "passes": 97,
+      "rate": 0.97,
+      "lower": 0.915481,
+      "wilson_lower": 0.915481,
+      "meets": true
+    },
+    {
+      "label": "r2",
+      "trials": 100,
+      "passes": 93,
+      "rate": 0.93,
+      "lower": 0.862505,
+      "wilson_lower": 0.862505,
+      "meets": false,
+      "trials_needed": {
+        "trials": 398,
+        "passes": 370
+      }
+    }
+  ],
+  "explanation": "1 of 2 round(s) could not prove a success rate of 90%. The weakest evidence is 'r2': it passed 93 of 100 (93.0%), but allowing for luck the true rate could be as low as 86.3%. At the same pass rate, about 398 trials would be enough."
+}

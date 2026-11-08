@@ -2,6 +2,26 @@
 
 ## 0.3.0 (unreleased)
 
+### Round 5 (still 0.3.0, unreleased): statistics and reproducibility audit
+
+Specialists: ML-evaluation statistician, LLM-evaluation engineer, release-gating/CI engineer, numerical-reproducibility reviewer (one agent played all four; see `docs/ROUND5.md`, which names the command behind each finding).
+
+Author line: the author, maintainer and copyright holder are now "Calas Automations Inc." (`pyproject.toml` authors and maintainers, `LICENSE`, `passgate.__author__`, `passgate --version`). A test pins it. The repository URLs still use the GitHub account name because that is where the code lives.
+
+Fixed (found by running things):
+- `items --k 2` (or any `--k` of 2 or more, pass^k and pass@k) trusted items that all scored the same: three items that each passed 10 of 10 gave a lower bound of 1.000 and PASS at any bar, because the t-interval over identical values has zero width. The interval is now Wilson's at an effective sample size taken from the spread of the item values (never fewer than one observation per item, never more than the usable trials), as the `--k 1` path already did. Simulated coverage of the lower end was 87% to 95% before and is at or above the 97.5% target now (`benchmarks/RESULTS-items-k.md`). Results change slightly for every `--k >= 2` run, in the cautious direction near 100%.
+- `wilson_interval(1, 1)` returned an upper bound of 0.9999999999999999, below the observed rate of 1.0 (rounding; found by a hypothesis property test). Both ends are now clamped so the observed rate is always inside its interval.
+- `pass_hat_k` and `pass_at_k` built huge integers: a billion trials with `--k 100000` took several seconds. They are now a float loop (milliseconds), and `pass_at_k` uses `expm1`/`log1p` so a tiny answer (3e-9) keeps its digits. Both now reject impossible counts (`passes > trials`) instead of returning nonsense.
+
+Added:
+- `tests/test_round5.py` (author pin; Wilson against 60-digit decimal arithmetic; Clopper-Pearson endpoints against their defining equations in exact fractions; pass@k / pass^k against brute-force enumeration; McNemar and Fisher against exact fractions; the gate verdict equals `min_passes` for every count; no verdict within 1e-9 of the bar; golden files for text, JSON, Markdown and JUnit of `gate` and `items`; hypothesis properties when hypothesis is installed). Golden files live in `tests/golden/`; regenerate with `UPDATE_GOLDEN=1 pytest tests/test_round5.py` and read the diff.
+- `scripts/mutation_check.py`: breaks 15 key lines one at a time and confirms the fast tests fail (15 of 15 killed; at first 3 survived, which exposed that nothing tested "a bar exactly equal to the bound passes").
+- `benchmarks/bench_items_k.py` and `benchmarks/RESULTS-items-k.md`.
+- GitHub Action outputs `exit-code` and `report-path`, so a later step can branch on the result.
+- `hypothesis` added to the `dev` extra (tests skip that one test without it).
+
+Upgrade check from the published 0.1.1: 120 random `gate` inputs (list, `{"rounds": ...}`, CSV, BOM, CRLF) gave the same exit code and the same per-round verdicts on 0.1.1 and on this tree. `compare` differs only where the changelog already says it does (`inconclusive` became `baseline-better` when the baseline is clearly better; 29 of 100 random pairs).
+
 ### Round 4 (still 0.3.0, unreleased): the stranger's first hour
 
 Specialists: first-time user (README only, clean venv), release engineer, supply-chain reviewer, docs writer, CI integrator, hostile-input fuzzer, performance engineer, competitor maintainer, Windows reviewer (read the code; nothing was run on Windows). Written up in `docs/ROUND4.md`. One agent played all the roles; no independent reviewers were available.

@@ -39,7 +39,9 @@ def _wilson(phat: float, trials: float, z: float) -> Tuple[float, float]:
     denom = 1.0 + z * z / trials
     center = (phat + z * z / (2 * trials)) / denom
     half = (z * math.sqrt(max(0.0, phat * (1 - phat) + z * z / (4 * trials)) / trials)) / denom
-    return max(0.0, center - half), min(1.0, center + half)
+    # clamp: rounding must never put the observed rate outside its own interval (found by hypothesis:
+    # 1 of 1 gave an upper bound of 0.9999999999999999)
+    return max(0.0, min(phat, center - half)), min(1.0, max(phat, center + half))
 
 
 def wilson_interval(passes: int, trials: int, confidence: float = 0.95) -> Tuple[float, float]:

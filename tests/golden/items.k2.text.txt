@@ -1,0 +1,6 @@
+items: pass^k = 0.783 over 4 item(s), 40 trial(s); 95% cluster-aware lower bound 0.254 vs bar 0.800
+  per-item unbiased pass^k estimates (k=2), Wilson interval over items at an effective sample size
+  weakest: gamma 6/10
+  weakest: beta 9/10
+verdict: FAIL
+In plain words: Across 4 test items the chance that all 2 tries in a row succeed is 78.3%. Because tries on the same item are alike, they carry less information than the same number of independent tries (design effect 1.0). Allowing for that, we are 95% sure the true value is at least 25.4%, short of your bar of 80%.
